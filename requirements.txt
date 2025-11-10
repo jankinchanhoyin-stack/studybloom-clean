@@ -1,11 +1,2 @@
 streamlit==1.39.0
-openai>=1.50.0
-pypdf==4.3.1
-python-dotenv==1.0.1
-
-# Supabase + deps (pinned & 3.11-friendly)
-supabase==2.4.0
-postgrest==0.14.11
-gotrue==2.6.0
-storage3==0.7.7
-httpx>=0.24,<0.28
+requests==2.32.3
