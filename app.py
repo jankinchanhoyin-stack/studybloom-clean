@@ -20,6 +20,60 @@ from auth_rest import (
     create_folder, list_folders, delete_folder
 )
 
+def render_summary(data: dict):
+    st.subheader("📝 Notes")
+    st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
+    for sec in data.get("sections", []) or []:
+        st.markdown(f"### {sec.get('heading','Section')}")
+        for b in sec.get("bullets", []) or []:
+            st.markdown(f"- {b}")
+
+    kts = data.get("key_terms") or []
+    if kts:
+        st.markdown("## Key Terms")
+        for kt in kts:
+            st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
+
+    forms = data.get("formulas") or []
+    if forms:
+        st.markdown("## Formulas")
+        for f in forms:
+            st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
+
+    exs = data.get("examples") or []
+    if exs:
+        st.markdown("## Worked Examples")
+        for e in exs:
+            st.markdown(f"- {e}")
+
+    pits = data.get("common_pitfalls") or []
+    if pits:
+        st.markdown("## Common Pitfalls")
+        for p in pits:
+            st.markdown(f"- {p}")
+
+def render_flashcards(data: dict):
+    st.subheader("🧠 Flashcards")
+    flashcards = data.get("flashcards") or data.get("data", {}).get("flashcards") or []
+    if not flashcards:
+        st.caption("No flashcards found.")
+        return
+    for i, c in enumerate(flashcards, 1):
+        st.markdown(f"**{i}. Front:** {c.get('front','')}\n\n**Back:** {c.get('back','')}")
+
+def render_quiz(data: dict):
+    st.subheader("🧪 Quiz")
+    qs = data.get("exam_questions") or data.get("data", {}).get("questions") or []
+    if not qs:
+        st.caption("No questions found.")
+        return
+    for i, q in enumerate(qs, 1):
+        st.markdown(f"**Q{i}. {q.get('question','')}**")
+        st.markdown(f"**Model answer:** {q.get('model_answer','')}")
+        for pt in q.get("markscheme_points", []) or []:
+            st.markdown(f"- {pt}")
+        st.markdown("---")
+
 # ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
 st.sidebar.caption("Log in to save, organize, and move your study materials.")
