@@ -1,21 +1,104 @@
 import streamlit as st
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
+from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
 st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
+
+# ---------------- Sidebar: Auth (always visible forms) ----------------
+st.sidebar.title("StudyBloom")
+st.sidebar.caption("Log in to save notes & track progress.")
+
+if "sb_user" not in st.session_state:
+    st.sidebar.subheader("Sign in")
+    login_email = st.sidebar.text_input("Email", key="login_email")
+    login_pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
+    if st.sidebar.button("Sign in", use_container_width=True):
+        try:
+            _, res = sign_in(login_email, login_pwd)
+            st.experimental_rerun()
+        except Exception as e:
+            st.sidebar.error(f"Sign-in failed: {e}")
+
+    st.sidebar.subheader("Create account")
+    reg_email = st.sidebar.text_input("New email", key="reg_email")
+    reg_pwd = st.sidebar.text_input("New password", type="password", key="reg_pwd")
+    if st.sidebar.button("Sign up", use_container_width=True):
+        try:
+            _, res = sign_up(reg_email, reg_pwd)
+            st.sidebar.success("Account created. Check your email if confirmation is required, then sign in above.")
+        except Exception as e:
+            st.sidebar.error(f"Sign-up failed: {e}")
+else:
+    st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
+    if st.sidebar.button("Sign out", use_container_width=True):
+        sign_out()
+        st.experimental_rerun()
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("My Summaries")
+    try:
+        res = list_summaries(limit=25)
+        rows = res.data or []
+        for row in rows:
+            label = f"• {row['title']}  ({row['created_at'][:10]})"
+            if st.sidebar.button(label, key=row["id"]):
+                try:
+                    doc = get_summary(row["id"]).data
+                    st.session_state["loaded_summary"] = doc
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Load failed: {e}")
+    except Exception:
+        st.sidebar.info("No saved summaries yet.")
+
+# ---------------- Main UI ----------------
 st.title("📚 StudyBloom — PDF Summarizer")
+st.caption("Upload a lecture PDF → get focused study notes, key terms, pitfalls, exam-style Qs, and flashcards.")
 
-st.caption("Upload a lecture PDF → get focused study notes, flashcards, and exam-style questions.")
-
-audience_label = st.selectbox(
-    "Audience style",
-    ["University", "A-Level / IB", "GCSE", "HKDSE"],
-    index=0,
-)
+audience_label = st.selectbox("Audience style", ["University", "A-Level / IB", "GCSE", "HKDSE"], index=0)
 audience = "university" if audience_label == "University" else "high school"
 detail = st.slider("Detail level (more = longer output)", 1, 5, 3)
 
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
+
+# If a summary was loaded from sidebar, render it
+if "loaded_summary" in st.session_state and not uploaded:
+    data = st.session_state.pop("loaded_summary")
+    st.subheader(data.get("title", "Summary"))
+    st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
+    for sec in data.get("sections", []):
+        st.markdown(f"### {sec.get('heading','Section')}")
+        for b in sec.get("bullets", []):
+            st.markdown(f"- {b}")
+    if data.get("key_terms"):
+        st.markdown("## Key Terms")
+        for kt in data["key_terms"]:
+            st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
+    if data.get("formulas"):
+        st.markdown("## Formulas")
+        for f in data["formulas"]:
+            st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
+    if data.get("examples"):
+        st.markdown("## Worked Examples")
+        for e in data["examples"]:
+            st.markdown(f"- {e}")
+    if data.get("common_pitfalls"):
+        st.markdown("## Common Pitfalls")
+        for p in data["common_pitfalls"]:
+            st.markdown(f"- {p}")
+    if data.get("exam_questions"):
+        st.markdown("## Exam-Style Questions")
+        for q in data["exam_questions"]:
+            st.markdown(f"**Q:** {q.get('question','')}")
+            st.markdown(f"**Model answer:** {q.get('model_answer','')}")
+            for pt in q.get("markscheme_points", []):
+                st.markdown(f"- {pt}")
+            st.markdown("---")
+    if data.get("flashcards"):
+        st.markdown("## Flashcards")
+        for c in data["flashcards"]:
+            st.markdown(f"- **Front:** {c.get('front','')}\n\n  **Back:** {c.get('back','')}")
 
 if uploaded:
     with st.spinner("Extracting text…"):
@@ -33,10 +116,8 @@ if uploaded:
     if st.button("Generate Summary"):
         with st.spinner("Summarizing with AI…"):
             try:
-                # Call new signature first
                 data = summarize_text(text, audience=audience, detail=detail)
             except TypeError:
-                # Fallback if an older llm.py without 'detail' is live
                 data = summarize_text(text, audience=audience)
             except Exception as e:
                 st.error(f"Summarization failed: {e}")
@@ -45,41 +126,35 @@ if uploaded:
         st.subheader(data.get("title", "Summary"))
         st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
 
-        # Sections
         for sec in data.get("sections", []):
             st.markdown(f"### {sec.get('heading', 'Section')}")
             for b in sec.get("bullets", []):
                 st.markdown(f"- {b}")
 
-        # Key Terms
         kts = data.get("key_terms", [])
         if kts:
             st.markdown("## Key Terms")
             for kt in kts:
                 st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
 
-        # Formulas
         forms = data.get("formulas", [])
         if forms:
             st.markdown("## Formulas")
             for f in forms:
                 st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
-        
-        # Worked Examples
+
         exs = data.get("examples", [])
         if exs:
             st.markdown("## Worked Examples")
             for e in exs:
                 st.markdown(f"- {e}")
 
-        # Common Pitfalls
         pits = data.get("common_pitfalls", [])
         if pits:
             st.markdown("## Common Pitfalls")
             for p in pits:
                 st.markdown(f"- {p}")
 
-        # Exam Questions
         qs = data.get("exam_questions", [])
         if qs:
             st.markdown("## Exam-Style Questions")
@@ -90,14 +165,26 @@ if uploaded:
                     st.markdown(f"- {pt}")
                 st.markdown("---")
 
-        # Flashcards
         fcs = data.get("flashcards", [])
         if fcs:
             st.markdown("## Flashcards")
             for c in fcs:
                 st.markdown(f"- **Front:** {c.get('front','')}\n\n  **Back:** {c.get('back','')}")
 
-        # Markdown Export
+        # Save to account (if logged in)
+        if "sb_user" in st.session_state:
+            if st.checkbox("Save this summary to my account", value=True):
+                try:
+                    title = data.get("title") or "Untitled"
+                    tl_dr = data.get("tl_dr") or ""
+                    save_summary(title, tl_dr, data)
+                    st.success("Saved to your account ✅")
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+        else:
+            st.info("Log in (left sidebar) to save this to your account.")
+
+        # Markdown export
         md_lines = [f"# {data.get('title','Summary')}", f"**TL;DR**: {data.get('tl_dr','')}", ""]
         for sec in data.get("sections", []):
             md_lines.append(f"## {sec.get('heading','Section')}")
