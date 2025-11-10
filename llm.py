@@ -1,9 +1,8 @@
-# llm.py
 import os, json, re
 from typing import List, Dict
+from openai import OpenAI
 
 def _get_api_key():
-    # Streamlit first, then env (.env optional locally)
     try:
         import streamlit as st
         k = st.secrets.get("OPENAI_API_KEY")
@@ -22,25 +21,14 @@ def get_client():
     key = _get_api_key()
     if not key:
         raise RuntimeError("OPENAI_API_KEY not found in Streamlit Secrets or environment.")
-    try:
-        from openai import OpenAI  # >=1.0
-        return OpenAI(api_key=key)
-    except Exception:
-        # Very old SDK fallback
-        import openai
-        openai.api_key = key
-        return openai
-
-def _supports_responses(client) -> bool:
-    # OpenAI v1.x client has .responses; old openai module does not
-    return hasattr(client, "responses") and hasattr(client.responses, "create")
+    return OpenAI(api_key=key)
 
 def _parse_json_loose(text: str) -> dict:
     try:
         return json.loads(text)
     except Exception:
         pass
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    m = re.search(r'\{.*\}', text, flags=re.DOTALL)
     if m:
         try:
             return json.loads(m.group(0))
@@ -71,7 +59,7 @@ SCHEMA_DESCRIPTION = (
     "No prose before or after the JSON."
 )
 
-def _chunk_summary_prompt(chunk: str, audience: str, detail: int):
+def _chunk_summary_prompt(chunk: str, audience: str, detail: int) -> List[Dict]:
     q_count = min(8, 3 + detail)
     fc_count = min(30, 8 + detail * 4)
     ex_count = min(5, 1 + detail // 2)
@@ -79,8 +67,8 @@ def _chunk_summary_prompt(chunk: str, audience: str, detail: int):
 
     sys = (
         "You are a meticulous study-note generator for exam prep. "
-        "Be specific, include precise definitions, facts, and formulas if present. "
-        "Bullets must be short but information-dense."
+        "Be specific, use precise language, include concrete facts, definitions, and formulas if present. "
+        "Bullets should be short but information-dense. Avoid fluff."
     )
     user = (
         f"Create rich study notes for a {audience} student from the CONTENT below.\n\n"
@@ -92,11 +80,12 @@ def _chunk_summary_prompt(chunk: str, audience: str, detail: int):
         f"- Include ~{fc_count} flashcards (front: question/term; back: definition/answer).\n\n"
         f"CONTENT (chunk):\n{chunk}"
     )
-    return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+    return [{"role":"system","content":sys},{"role":"user","content":user}]
 
-def _merge_prompt(partials_json: List[dict], audience: str, detail: int):
+def _merge_prompt(partials_json: List[dict], audience: str, detail: int) -> List[Dict]:
     q_count = min(12, 5 + detail)
     fc_count = min(40, 12 + detail * 5)
+
     sys = (
         "You are combining multiple partial study-note summaries into a single coherent set. "
         "Merge, deduplicate, and improve specificity. Keep it exam-oriented."
@@ -112,41 +101,12 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int):
         f"- Keep flashcards to ~{fc_count} high-quality items.\n\n"
         f"PARTIALS:\n{json.dumps(partials_json)[:120000]}"
     )
-    return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
-
-def _call_model(client, messages):
-    """
-    Returns the text output given messages in either Responses or Chat Completions.
-    """
-    model = "gpt-4o-mini"
-    if _supports_responses(client):
-        # OpenAI v1 Responses API
-        resp = client.responses.create(model=model, input=messages)
-        # Consolidate as text (works for simple text outputs)
-        try:
-            return resp.output_text
-        except Exception:
-            # Fallback: parse from response structure
-            try:
-                return resp.choices[0].message.content[0].text  # very defensive
-            except Exception:
-                return ""
-    else:
-        # Old SDK: Chat Completions
-        try:
-            # openai module global
-            import openai as old
-            r = old.ChatCompletion.create(model=model, messages=messages, temperature=0.2)
-            return r["choices"][0]["message"]["content"]
-        except Exception:
-            # Newer v1 client but without .responses: use chat.completions via client
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
-            return r.choices[0].message.content
+    return [{"role":"system","content":sys},{"role":"user","content":user}]
 
 def ask_gpt(prompt: str) -> str:
     client = get_client()
-    messages = [{"role": "user", "content": prompt}]
-    return _call_model(client, messages)
+    r = client.responses.create(model="gpt-4o-mini", input=prompt)
+    return r.output_text
 
 def summarize_text(text: str, audience: str = "university", detail: int = 3) -> dict:
     client = get_client()
@@ -154,13 +114,15 @@ def summarize_text(text: str, audience: str = "university", detail: int = 3) -> 
     partials = []
     for ch in chunks:
         msgs = _chunk_summary_prompt(ch, audience, detail)
-        out = _call_model(client, msgs) or ""
-        partials.append(_parse_json_loose(out))
+        r = client.responses.create(model="gpt-4o-mini", input=msgs)
+        partial = _parse_json_loose(r.output_text or "")
+        partials.append(partial)
 
     if len(partials) == 1:
         return partials[0]
 
     msgs = _merge_prompt(partials, audience, detail)
-    out = _call_model(client, msgs) or ""
-    return _parse_json_loose(out)
+    r = client.responses.create(model="gpt-4o-mini", input=msgs)
+    return _parse_json_loose(r.output_text or "")
+
 
