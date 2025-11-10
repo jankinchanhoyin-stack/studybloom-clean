@@ -276,5 +276,3 @@ def grade_free_answer_fast(q, model_answer, markscheme, user_answer, subject="Ge
 
 
 
-
-
