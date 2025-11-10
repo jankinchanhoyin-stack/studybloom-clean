@@ -314,9 +314,9 @@ with tabs[0]:
                     for sec in data["sections"]:
                         st.markdown(f"- **{sec.get('heading','Section')}**")
                 if data.get("flashcards"):
-                    st.markdown(f"**Flashcards:** {len(data['flashcards'])}")
+                    st.markdown(f"**Flashcards:** {len(data.get('flashcards') or [])}")
                 if data.get("exam_questions"):
-                    st.markdown(f**"**Quiz questions:** {len(data['exam_questions'])}")
+                    st.markdown(f"**Quiz questions:** {len(data.get('exam_questions') or [])}")
 
 
 # ---------- Tab 2: Quick Study ----------
