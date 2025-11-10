@@ -1,29 +1,23 @@
 # app.py
 import streamlit as st
-
-st.set_page_config(page_title="StudyBloom • Summarize", page_icon="📚")
-st.title("📚 StudyBloom — PDF Summarizer")
-
-# --- health check: show if the key is present ---
-has_key = False
-try:
-    has_key = bool(st.secrets.get("OPENAI_API_KEY"))
-except Exception:
-    has_key = False
-
-st.caption("Health check:")
-st.write("- Streamlit secrets has OPENAI_API_KEY:", "✅" if has_key else "❌")
-if not has_key:
-    st.warning("Add OPENAI_API_KEY in Manage app → Edit secrets, then click Rerun.")
-    st.stop()
-
-# --- rest of the app ---
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
 
-st.caption("Upload a lecture PDF → extract text → AI summary → download Markdown.")
+st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
+st.title("📚 StudyBloom — PDF Summarizer")
 
-audience = st.selectbox("Audience style", ["university", "A-Level / IB", "GCSE", "HKDSE"], index=0)
+st.caption("Upload a lecture PDF → get focused study notes, flashcards, and exam-style questions.")
+
+audience_label = st.selectbox(
+    "Audience style",
+    ["University", "A-Level / IB", "GCSE", "HKDSE"],
+    index=0,
+)
+# map to simpler prompt term
+audience = "university" if audience_label == "University" else "high school"
+
+detail = st.slider("Detail level (more = longer output)", 1, 5, 3)
+
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
 if uploaded:
@@ -35,56 +29,56 @@ if uploaded:
             st.error(f"PDF extraction failed: {e}")
             st.stop()
 
-    st.write(f"**Extracted characters:** {len(text):,}")
-    st.code(text[:1500] + ("..." if len(text) > 1500 else ""))
+    if not text.strip():
+        st.error("Couldn’t extract text from this PDF. Try another file or a text-based PDF.")
+        st.stop()
 
     if st.button("Generate Summary"):
         with st.spinner("Summarizing with AI…"):
-            a = "university" if audience == "university" else "high school"
             try:
-                data = summarize_text(text, audience=a)
+                data = summarize_text(text, audience=audience, detail=detail)
             except Exception as e:
                 st.error(f"Summarization failed: {e}")
                 st.stop()
 
-        st.subheader(data.get("title","Summary"))
-        st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
+        st.subheader(data.get("title", "Summary"))
+        st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
 
-        # sections
+        # Sections
         for sec in data.get("sections", []):
-            st.markdown(f"### {sec.get('heading','Section')}")
+            st.markdown(f"### {sec.get('heading', 'Section')}")
             for b in sec.get("bullets", []):
                 st.markdown(f"- {b}")
 
-        # key terms
+        # Key Terms
         kts = data.get("key_terms", [])
         if kts:
             st.markdown("## Key Terms")
             for kt in kts:
                 st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
 
-        # formulas
+        # Formulas
         forms = data.get("formulas", [])
         if forms:
             st.markdown("## Formulas")
             for f in forms:
                 st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
-        
-        # examples
+
+        # Worked Examples
         exs = data.get("examples", [])
         if exs:
             st.markdown("## Worked Examples")
             for e in exs:
                 st.markdown(f"- {e}")
 
-        # pitfalls
+        # Common Pitfalls
         pits = data.get("common_pitfalls", [])
         if pits:
             st.markdown("## Common Pitfalls")
             for p in pits:
                 st.markdown(f"- {p}")
 
-        # exam questions
+        # Exam Questions
         qs = data.get("exam_questions", [])
         if qs:
             st.markdown("## Exam-Style Questions")
@@ -95,14 +89,14 @@ if uploaded:
                     st.markdown(f"- {pt}")
                 st.markdown("---")
 
-        # flashcards
+        # Flashcards
         fcs = data.get("flashcards", [])
         if fcs:
             st.markdown("## Flashcards")
             for c in fcs:
-                st.markdown(f"- **Front:** {c.get('front','')}\n  \n  **Back:** {c.get('back','')}")
+                st.markdown(f"- **Front:** {c.get('front','')}\n\n  **Back:** {c.get('back','')}")
 
-        # markdown export
+        # Markdown Export
         md_lines = [f"# {data.get('title','Summary')}", f"**TL;DR**: {data.get('tl_dr','')}", ""]
         for sec in data.get("sections", []):
             md_lines.append(f"## {sec.get('heading','Section')}")
