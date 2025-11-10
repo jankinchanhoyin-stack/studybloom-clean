@@ -1,7 +1,7 @@
 import streamlit as st
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
-from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
+from auth_rest import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
 st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
 
