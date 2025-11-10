@@ -3,6 +3,9 @@ import datetime as dt
 import streamlit as st
 import requests
 
+import sys
+st.caption(f"Python: {sys.version.split()[0]}")
+
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
 
