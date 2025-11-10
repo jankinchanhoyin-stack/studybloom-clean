@@ -1,14 +1,13 @@
 # llm.py
 import os, json, re
-from typing import List, Dict
+from typing import List
 
 def _get_api_key():
-    # Streamlit first, then env (.env optional locally)
+    # Streamlit first, then env
     try:
         import streamlit as st
         k = st.secrets.get("OPENAI_API_KEY")
-        if k:
-            return k
+        if k: return k
     except Exception:
         pass
     try:
@@ -23,28 +22,15 @@ def get_client():
     if not key:
         raise RuntimeError("OPENAI_API_KEY not found in Streamlit Secrets or environment.")
     try:
-        from openai import OpenAI  # >=1.0 client
+        from openai import OpenAI  # >=1.x client
         return OpenAI(api_key=key)
     except Exception:
-        import openai                   # very old SDK fallback
+        import openai
         openai.api_key = key
         return openai
 
 def _supports_responses(client) -> bool:
     return hasattr(client, "responses") and hasattr(client.responses, "create")
-
-def inference_mode() -> str:
-    # helpful for debugging in app
-    try:
-        import openai
-        ver = getattr(openai, "__version__", "unknown")
-    except Exception:
-        ver = "unknown"
-    try:
-        c = get_client()
-        return f"openai {ver} • mode=" + ("responses" if _supports_responses(c) else "chat")
-    except Exception as e:
-        return f"openai {ver} • mode=error: {e}"
 
 def _parse_json_loose(text: str) -> dict:
     try:
@@ -74,7 +60,7 @@ SCHEMA_DESCRIPTION = (
     "tl_dr (string),\n"
     "sections (array of objects: {heading (string), bullets (array of strings)}),\n"
     "key_terms (array of objects: {term (string), definition (string)}),\n"
-    "formulas (array of objects: {name (string), expression (string), meaning (string)}),\n"
+    "formulas (array of objects: {name (string), expression (string), meaning (string), latex (string optional)}),\n"
     "examples (array of strings),\n"
     "common_pitfalls (array of strings),\n"
     "exam_questions (array of objects: {question (string), model_answer (string), markscheme_points (array of strings)}),\n"
@@ -82,11 +68,18 @@ SCHEMA_DESCRIPTION = (
     "No prose before or after the JSON."
 )
 
-def _chunk_summary_prompt(chunk: str, audience: str, detail: int):
+def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
     q_count = min(8, 3 + detail)
     fc_count = min(30, 8 + detail * 4)
     ex_count = min(5, 1 + detail // 2)
     pit_count = min(8, 3 + detail)
+
+    # Subject-aware rules. For math, prefer LaTeX.
+    subj_rules = (
+        "If the subject is Mathematics or similar, output formulas in LaTeX in the 'latex' field "
+        "(e.g., a^2 becomes a^{2}; fractions as \\frac{a}{b}; roots as \\sqrt{...}; vectors with \\vec{}). "
+        "For exam_questions, ensure they are strictly relevant to the subject."
+    )
 
     sys = (
         "You are a meticulous study-note generator for exam prep. "
@@ -94,18 +87,21 @@ def _chunk_summary_prompt(chunk: str, audience: str, detail: int):
         "Bullets must be short but information-dense."
     )
     user = (
+        f"SUBJECT: {subject}\n"
         f"Create rich study notes for a {audience} student from the CONTENT below.\n\n"
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Requirements:\n"
         f"- Provide ~{ex_count} worked example(s) if possible.\n"
         f"- Include ~{pit_count} common_pitfalls (typical misconceptions).\n"
         f"- Include ~{q_count} exam_questions with concise model answers and point-based markscheme_points.\n"
-        f"- Include ~{fc_count} flashcards (front: question/term; back: definition/answer).\n\n"
+        f"- Include ~{fc_count} flashcards (front: question/term; back: definition/answer).\n"
+        "- All questions must be appropriate for the SUBJECT only.\n"
+        f"- {subj_rules}\n\n"
         f"CONTENT (chunk):\n{chunk}"
     )
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
 
-def _merge_prompt(partials_json: List[dict], audience: str, detail: int):
+def _merge_prompt(partials_json: List[dict], audience: str, detail: int, subject: str):
     q_count = min(12, 5 + detail)
     fc_count = min(40, 12 + detail * 5)
     sys = (
@@ -113,12 +109,14 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int):
         "Merge, deduplicate, and improve specificity. Keep it exam-oriented."
     )
     user = (
+        f"SUBJECT: {subject}\n"
         f"Merge the following partial JSON summaries into one final, comprehensive set for a {audience} student.\n"
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Guidelines:\n"
         "- Deduplicate overlapping bullets/terms.\n"
         "- Keep the most specific, factual phrasing.\n"
         "- Ensure a logical section order from fundamentals → applications.\n"
+        "- Keep questions strictly within the SUBJECT.\n"
         f"- Keep exam_questions concise; provide ~{q_count} of the best.\n"
         f"- Keep flashcards to ~{fc_count} high-quality items.\n\n"
         f"PARTIALS:\n{json.dumps(partials_json)[:120000]}"
@@ -128,7 +126,7 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int):
 def _call_model(client, messages) -> str:
     model = "gpt-4o-mini"
     if _supports_responses(client):
-        # New Responses API path
+        # Responses API path
         resp = client.responses.create(model=model, input=messages)
         try:
             return resp.output_text
@@ -138,36 +136,32 @@ def _call_model(client, messages) -> str:
             except Exception:
                 return ""
     else:
-        # Chat Completions path (works on old & new clients)
+        # Chat Completions path
         try:
             import openai as old
             r = old.ChatCompletion.create(model=model, messages=messages, temperature=0.2)
             return r["choices"][0]["message"]["content"]
         except Exception:
-            # Newer v1 client without .responses: client.chat.completions.create
+            # Newer v1 client without .responses
             r = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
             return r.choices[0].message.content
 
-def ask_gpt(prompt: str) -> str:
-    client = get_client()
-    messages = [{"role": "user", "content": prompt}]
-    return _call_model(client, messages)
-
-def summarize_text(text: str, audience: str = "university", detail: int = 3) -> dict:
+def summarize_text(text: str, audience: str = "university", detail: int = 3, subject: str = "General") -> dict:
     client = get_client()
     chunks = _chunk_text(text, chunk_chars=9000, overlap=500)
     partials = []
     for ch in chunks:
-        msgs = _chunk_summary_prompt(ch, audience, detail)
+        msgs = _chunk_summary_prompt(ch, audience, detail, subject)
         out = _call_model(client, msgs) or ""
         partials.append(_parse_json_loose(out))
 
     if len(partials) == 1:
         return partials[0]
 
-    msgs = _merge_prompt(partials, audience, detail)
+    msgs = _merge_prompt(partials, audience, detail, subject)
     out = _call_model(client, msgs) or ""
     return _parse_json_loose(out)
+
 
 
 
