@@ -1,230 +1,239 @@
 # llm.py
-import os, json, re
-from typing import List, Dict, Any
+import os, json, hashlib, asyncio
+from typing import List, Dict, Any, Optional
+from openai import AsyncOpenAI
+import sympy as sp
 
-def _get_api_key():
-    try:
-        import streamlit as st
-        k = st.secrets.get("OPENAI_API_KEY")
-        if k: return k
-    except Exception:
-        pass
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except Exception:
-        pass
-    return os.getenv("OPENAI_API_KEY")
+# ---------- Models ----------
+FAST_MODEL  = os.getenv("MODEL_FAST",  "gpt-4o-mini")
+SMART_MODEL = os.getenv("MODEL_SMART", "gpt-4o")
 
-def get_client():
-    key = _get_api_key()
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY not found in Streamlit Secrets or environment.")
-    try:
-        from openai import OpenAI
-        return OpenAI(api_key=key)
-    except Exception:
-        import openai
-        openai.api_key = key
-        return openai
+client_async = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def _supports_responses(client) -> bool:
-    return hasattr(client, "responses") and hasattr(client.responses, "create")
+# ---------- Tiny in-memory cache (swap to Redis/Supabase if needed) ----------
+_CACHE: Dict[str, Any] = {}
 
-def _parse_json_loose(text: str) -> dict:
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            pass
-    return {"title": "Summary", "tl_dr": text.strip(), "sections": []}
+def _h(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
-def _chunk_text(text: str, chunk_chars: int = 9000, overlap: int = 500) -> List[str]:
-    if len(text) <= chunk_chars:
+# ---------- Simple splitter (char-based; replace with token splitter if you prefer) ----------
+def chunk_text(text: str, target_chars: int = 8000, overlap: int = 400) -> List[str]:
+    text = text.strip()
+    if len(text) <= target_chars:
         return [text]
-    chunks, i = [], 0
+    chunks = []
+    i = 0
     while i < len(text):
-        chunks.append(text[i:i+chunk_chars])
-        i += max(1, chunk_chars - overlap)
+        j = min(len(text), i + target_chars)
+        chunks.append(text[i:j])
+        i = j - overlap
+        if i < 0:
+            i = 0
+        if i >= len(text):
+            break
     return chunks
 
-def _audience_rules(audience: str) -> str:
-    a = (audience or "").lower()
-    if "primary" in a:
-        return ("Use simple words, short steps, and playful contexts (e.g., apples, marbles, playground). "
-                "Keep questions bite-sized; include hints in model answers. Avoid heavy notation unless necessary.")
-    if "a-level" in a or "alevel" in a:
-        return ("Use exam-style phrasing and mark-scheme level precision appropriate to A-Level.")
-    return "Keep tone appropriate for the specified audience."
-
-SCHEMA_DESCRIPTION = (
-    "Return ONLY JSON with keys exactly:\n"
-    "title (string),\n"
-    "tl_dr (string),\n"
-    "sections (array of objects: {heading (string), bullets (array of strings)}),\n"
-    "key_terms (array of objects: {term (string), definition (string)}),\n"
-    "formulas (array of objects: {name (string), expression (string), meaning (string), latex (string optional)}),\n"
-    "examples (array of strings),\n"
-    "common_pitfalls (array of strings),\n"
-    "exam_questions (array of objects: {question (string), model_answer (string), markscheme_points (array of strings)}),\n"
-    "flashcards (array of objects: {front (string), back (string)}).\n"
-    "No prose before or after the JSON."
-)
-
-def _subject_rules(subject: str) -> str:
-    s = (subject or "").lower()
-    if "math" in s or "mathemat" in s:
-        return ("For Mathematics: use calculation/past-paper style questions; avoid essays. Prefer LaTeX in formulas.latex "
-                "(a^2 -> a^{2}, fractions \\frac{a}{b}, roots \\sqrt{}, products \\cdot, vectors \\vec{}). "
-                "Model answers concise with key mark-scheme points.")
-    return ("Ensure exam_questions match the subject; avoid off-topic questions. "
-            "Be concrete with definitions, processes and key facts.")
-
-def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
-    q_count = min(8, 3 + detail)
-    fc_count = min(30, 8 + detail * 4)
-    ex_count = min(5, 1 + detail // 2)
-    pit_count = min(8, 3 + detail)
-
-    sys = (
-        "You are a meticulous study-note generator for exam prep. "
-        "Be specific, include precise definitions, facts, and formulas if present. "
-        "Bullets must be short but information-dense."
+# ---------- Chunk summarization (parallel, cached) ----------
+async def _summ_chunk(text: str, audience: str, detail: int) -> Dict[str, Any]:
+    key = f"summ:{_h(text)}:{audience}:{detail}"
+    if key in _CACHE:
+        return _CACHE[key]
+    resp = await client_async.chat.completions.create(
+        model=FAST_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        max_tokens=450,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Return JSON ONLY. Keys: bullets(array of strings), "
+                    "key_terms(array of {term,definition})."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Audience:{audience}\nDetail:{detail}\nText:\n{text}",
+            },
+        ],
     )
-    user = (
-        f"SUBJECT: {subject}\n"
-        f"AUDIENCE: {audience}\n"
-        f"{_audience_rules(audience)}\n"
-        f"{SCHEMA_DESCRIPTION}\n\n"
-        "Requirements:\n"
-        f"- Provide ~{ex_count} worked example(s) if possible.\n"
-        f"- Include ~{pit_count} common_pitfalls.\n"
-        f"- Include ~{q_count} exam_questions with concise model answers and point-based markscheme_points.\n"
-        f"- Include ~{fc_count} flashcards.\n"
-        f"- {_subject_rules(subject)}\n\n"
-        f"CONTENT (chunk):\n{chunk}"
-    )
-    return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+    data = json.loads(resp.choices[0].message.content)
+    _CACHE[key] = data
+    return data
 
-def _merge_prompt(partials_json: List[dict], audience: str, detail: int, subject: str):
-    q_count = min(12, 5 + detail)
-    fc_count = min(40, 12 + detail * 5)
-    sys = (
-        "You are combining multiple partial study-note summaries into a single coherent set. "
-        "Merge, deduplicate, and improve specificity. Keep it exam-oriented."
-    )
-    user = (
-        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n{_audience_rules(audience)}\n"
-        f"{SCHEMA_DESCRIPTION}\n\n"
-        "Guidelines:\n"
-        "- Deduplicate overlapping bullets/terms.\n"
-        "- Keep the most specific, factual phrasing.\n"
-        "- Ensure a logical section order from fundamentals → applications.\n"
-        "- Keep questions strictly within the SUBJECT.\n"
-        f"- Keep exam_questions concise; provide ~{q_count} of the best.\n"
-        f"- Keep flashcards to ~{fc_count} high-quality items.\n\n"
-        f"PARTIALS:\n{json.dumps(partials_json)[:120000]}"
-    )
-    return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
+async def summarize_text_fast(text: str, audience="high school", detail: int = 3, subject: str = "General") -> Dict[str, Any]:
+    chunks = chunk_text(text, target_chars=8000, overlap=400)
+    tasks = [_summ_chunk(c, audience, detail) for c in chunks]
+    parts = await asyncio.gather(*tasks)
 
-def _call_model(client, messages) -> str:
-    model = "gpt-4o-mini"
-    if _supports_responses(client):
-        resp = client.responses.create(model=model, input=messages)
-        try:
-            return resp.output_text
-        except Exception:
-            try:
-                return resp.choices[0].message.content[0].text
-            except Exception:
-                return ""
+    merged = await client_async.chat.completions.create(
+        model=SMART_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        max_tokens=900,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Fuse the inputs into concise, accurate study notes for the given subject."
+                    "Return JSON ONLY with keys:"
+                    " tl_dr(string), "
+                    " sections(array of {heading,bullets}), "
+                    " key_terms(array of {term,definition}), "
+                    " formulas(optional array of {name,latex,meaning}), "
+                    " examples(optional array), "
+                    " common_pitfalls(optional array), "
+                    " flashcards(optional array of {front,back}), "
+                    " exam_questions(optional array)."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "subject": subject,
+                        "audience": audience,
+                        "detail": detail,
+                        "parts": parts,
+                    }
+                ),
+            },
+        ],
+    )
+    return json.loads(merged.choices[0].message.content)
+
+# Back-compat wrapper (some places call summarize_text)
+def summarize_text(text: str, audience="high school", detail: int = 3, subject: str = "General") -> Dict[str, Any]:
+    return asyncio.run(summarize_text_fast(text, audience=audience, detail=detail, subject=subject))
+
+# ---------- Flashcards & Quizzes ----------
+async def generate_flashcards_from_notes(notes_json: Dict[str, Any], audience="high school") -> List[Dict[str, str]]:
+    key = f"fc:{_h(json.dumps(notes_json))}:{audience}"
+    if key in _CACHE:
+        return _CACHE[key]
+    resp = await client_async.chat.completions.create(
+        model=FAST_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        max_tokens=600,
+        messages=[
+            {"role": "system", "content": "Return JSON ONLY: flashcards(array of {front,back})."},
+            {"role": "user", "content": json.dumps({"audience": audience, "notes": notes_json})},
+        ],
+    )
+    data = json.loads(resp.choices[0].message.content)
+    cards = data.get("flashcards") or []
+    _CACHE[key] = cards
+    return cards
+
+async def generate_quiz_from_notes_async(
+    notes_json: Dict[str, Any],
+    subject="General",
+    audience="high school",
+    num_questions: int = 8,
+    mode: str = "free",    # "free" or "mcq"
+    mcq_options: int = 4,
+) -> List[Dict[str, Any]]:
+    """
+    For free-response: return [{question, model_answer, markscheme_points[]}]
+    For MCQ: return [{question, options[], correct_index, explanation}]
+    """
+    key = f"quiz:{mode}:{num_questions}:{mcq_options}:{subject}:{audience}:{_h(json.dumps(notes_json))}"
+    if key in _CACHE:
+        return _CACHE[key]
+
+    if mode == "mcq":
+        sys_msg = (
+            "Return JSON ONLY: questions(array of {question, options(array), correct_index(int), explanation}). "
+            "Only ask things that can be answered by choosing an option."
+        )
+        user_payload = {
+            "subject": subject,
+            "audience": audience,
+            "num_questions": num_questions,
+            "mcq_options": mcq_options,
+            "notes": notes_json,
+        }
     else:
-        try:
-            import openai as old
-            r = old.ChatCompletion.create(model=model, messages=messages, temperature=0.2)
-            return r["choices"][0]["message"]["content"]
-        except Exception:
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
-            return r.choices[0].message.content
+        sys_msg = (
+            "Return JSON ONLY: questions(array of {question, model_answer, markscheme_points(array)}). "
+            "Questions should be exam-style, marked by points."
+        )
+        user_payload = {
+            "subject": subject,
+            "audience": audience,
+            "num_questions": num_questions,
+            "notes": notes_json,
+        }
 
-def summarize_text(text: str, audience: str = "university", detail: int = 3, subject: str = "General") -> dict:
-    client = get_client()
-    chunks = _chunk_text(text, chunk_chars=9000, overlap=500)
-    partials = []
-    for ch in chunks:
-        msgs = _chunk_summary_prompt(ch, audience, detail, subject)
-        out = _call_model(client, msgs) or ""
-        partials.append(_parse_json_loose(out))
-    if len(partials) == 1:
-        return partials[0]
-    msgs = _merge_prompt(partials, audience, detail, subject)
-    out = _call_model(client, msgs) or ""
-    return _parse_json_loose(out)
+    resp = await client_async.chat.completions.create(
+        model=FAST_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        max_tokens=900,
+        messages=[
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": json.dumps(user_payload)},
+        ],
+    )
+    data = json.loads(resp.choices[0].message.content)
+    out = data.get("questions") or []
+    _CACHE[key] = out
+    return out
 
-# ---- AI grading for free-text quiz answers ----
-def grade_free_answer(question: str, model_answer: str, markscheme: List[str], user_answer: str, subject: str = "General") -> Dict[str, Any]:
-    client = get_client()
-    max_points = max(5, min(10, len(markscheme) or 5))
-    sys = (
-        "You are a strict but fair examiner. Score the student's answer against the model answer "
-        "and mark-scheme points. Accept equivalent phrasing and equivalent maths/units. "
-        "Return ONLY JSON: {\"correct\": bool, \"score\": int, \"max_points\": int, \"feedback\": string}."
-    )
-    user = (
-        f"SUBJECT: {subject}\n"
-        f"QUESTION: {question}\n\n"
-        f"MODEL_ANSWER: {model_answer}\n"
-        f"MARK_SCHEME_POINTS: {json.dumps(markscheme)}\n\n"
-        f"STUDENT_ANSWER: {user_answer}\n"
-        f"MAX_POINTS: {max_points}\n"
-        "Rules:\n"
-        "- Map student's content to mark-scheme points.\n"
-        "- Don't nit-pick wording if the idea/calculation is correct.\n"
-        "- If the answer is largely correct but missing minor detail, give partial credit.\n"
-        "- Respond ONLY with the JSON."
-    )
-    messages = [{"role": "system", "content": sys}, {"role": "user", "content": user}]
-    out = _call_model(client, messages) or ""
+def generate_quiz_from_notes(notes_json: Dict[str, Any], subject="General", audience="high school", num_questions: int = 8):
+    # kept for older calls (free-response default)
+    return asyncio.run(generate_quiz_from_notes_async(notes_json, subject, audience, num_questions, "free", 4))
+
+# ---------- Hybrid grading (math local first, then LLM) ----------
+def try_grade_math_numeric(user_answer: str, model_answer: str) -> Optional[bool]:
     try:
-        data = json.loads(out)
-        data["max_points"] = int(max_points)
-        data["score"] = int(max(0, min(max_points, data.get("score", 0))))
-        data["correct"] = bool(data.get("correct", data["score"] >= max_points * 0.7))
-        data["feedback"] = str(data.get("feedback", ""))
-        return data
+        u = sp.N(sp.sympify(user_answer))
+        m = sp.N(sp.sympify(model_answer))
+        return bool(sp.Abs(u - m) < sp.Float("1e-6"))
     except Exception:
-        return {"correct": False, "score": 0, "max_points": max_points, "feedback": "Could not parse grading response."}
+        return None
 
-# ---- Generate a new quiz from notes ----
-def generate_quiz_from_notes(notes: dict, subject: str = "General", audience: str = "high school", num_questions: int = 8) -> List[Dict[str, Any]]:
-    client = get_client()
-    sys = (
-        "You generate exam-style questions from provided study notes. "
-        "Return ONLY JSON array exam_questions with objects: "
-        "{question, model_answer, markscheme_points}."
-    )
-    user = (
-        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n{_audience_rules(audience)}\n"
-        f"NUM_QUESTIONS: {num_questions}\n"
-        f"{_subject_rules(subject)}\n\n"
-        f"NOTES_JSON:\n{json.dumps(notes)[:120000]}"
-    )
-    messages = [{"role": "system", "content": sys}, {"role": "user", "content": user}]
-    out = _call_model(client, messages) or ""
+def try_grade_math_expr(user_answer: str, model_answer: str) -> Optional[bool]:
     try:
-        data = json.loads(out)
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and "exam_questions" in data:
-            return data["exam_questions"]
+        u = sp.simplify(sp.sympify(user_answer))
+        m = sp.simplify(sp.sympify(model_answer))
+        return bool(sp.simplify(u - m) == 0)
     except Exception:
-        pass
-    return []
+        return None
+
+async def _grade_free_llm_async(q, model_answer, markscheme, user_answer, subject="General"):
+    resp = await client_async.chat.completions.create(
+        model=SMART_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        max_tokens=400,
+        messages=[
+            {"role": "system",
+             "content": "Return JSON ONLY: {score:int,max_points:int,feedback:string}. Use the mark scheme."},
+            {"role": "user",
+             "content": json.dumps({
+                 "subject": subject,
+                 "question": q,
+                 "model_answer": model_answer,
+                 "markscheme_points": markscheme,
+                 "user_answer": user_answer
+             })}
+        ],
+    )
+    return json.loads(resp.choices[0].message.content)
+
+def grade_free_answer(q, model_answer, markscheme, user_answer, subject="General"):
+    return asyncio.run(_grade_free_llm_async(q, model_answer, markscheme, user_answer, subject))
+
+def grade_free_answer_fast(q, model_answer, markscheme, user_answer, subject="General"):
+    if subject.lower().startswith("math"):
+        eq = try_grade_math_numeric(user_answer, model_answer)
+        if eq is None: eq = try_grade_math_expr(user_answer, model_answer)
+        if eq is not None:
+            return {"score": 10 if eq else 0, "max_points": 10, "feedback": "Auto-graded (math equivalence)."}
+    return grade_free_answer(q, model_answer, markscheme, user_answer, subject=subject)
+
 
 
 
