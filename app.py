@@ -136,68 +136,126 @@ with tabs[0]:
     if "sb_user" not in st.session_state:
         st.info("Log in (left) to use Exam Planner.")
     else:
-        # Pick or create Subject / Exam / Topic folders
+        # ensure keys
+        st.session_state.setdefault("ep_subject_id", None)
+        st.session_state.setdefault("ep_exam_id", None)
+        st.session_state.setdefault("ep_topic_id", None)
+
+        def id_to_name(fid):
+            if not fid:
+                return None
+            for f in all_folders:
+                if f["id"] == fid:
+                    return f["name"]
+            return None
+
         st.subheader("Choose destination folders")
-        all_names = {f["id"]: f["name"] for f in all_folders}
-        # Subject = top-level (parent_id is NULL)
+
+        # ----- SUBJECT -----
         subjects = [f for f in all_folders if not f.get("parent_id")]
-        subject_choice = st.selectbox(
-            "Subject folder",
-            ["(create new)"] + [s["name"] for s in subjects],
-        )
-        if subject_choice == "(create new)":
-            new_subject = st.text_input("New subject name")
-            if st.button("Create Subject"):
-                try:
-                    subj = create_folder(new_subject.strip(), None)
-                    st.session_state["active_folder_id"] = subj["id"]
-                    st.success("Subject created.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Create failed: {e}")
-            st.stop()
-        else:
-            subject_id = next(s["id"] for s in subjects if s["name"] == subject_choice)
+        subj_names = [s["name"] for s in subjects]
+        # pre-select by session
+        subj_index = 0
+        if st.session_state["ep_subject_id"]:
+            sel_name = id_to_name(st.session_state["ep_subject_id"])
+            if sel_name in subj_names:
+                subj_index = subj_names.index(sel_name)
 
-        # Exams under chosen subject
+        cols = st.columns([3,1])
+        subject_choice = cols[0].selectbox("Subject folder", ["(create new)"] + subj_names, index=subj_index+1 if subj_names else 0, key="ep_subj_choice")
+        if cols[1].button("New subject"):
+            new_subject = st.text_input("New subject name", key="ep_new_subject_name", placeholder="e.g., A-Level Physics")
+            create_click = st.button("Create Subject", key="ep_create_subject_go")
+            if create_click:
+                n = st.session_state.get("ep_new_subject_name", "").strip()
+                if not n:
+                    st.warning("Enter a subject name.")
+                else:
+                    try:
+                        subj = create_folder(n, None)
+                        st.session_state["ep_subject_id"] = subj["id"]
+                        st.session_state["ep_exam_id"] = None
+                        st.session_state["ep_topic_id"] = None
+                        st.session_state["active_folder_id"] = subj["id"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+
+        if subject_choice != "(create new)" and subj_names:
+            st.session_state["ep_subject_id"] = next(s["id"] for s in subjects if s["name"] == subject_choice)
+
+        subject_id = st.session_state["ep_subject_id"]
+        if not subject_id:
+            st.stop()
+
+        # ----- EXAM -----
         exams = [f for f in all_folders if f.get("parent_id") == subject_id]
-        exam_choice = st.selectbox(
-            "Exam folder",
-            ["(create new)"] + [e["name"] for e in exams],
-        )
-        if exam_choice == "(create new)":
-            new_exam = st.text_input("New exam name (e.g., May 2026 A-Level)")
-            if st.button("Create Exam"):
-                try:
-                    ex = create_folder(new_exam.strip(), subject_id)
-                    st.session_state["active_folder_id"] = ex["id"]
-                    st.success("Exam created.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Create failed: {e}")
-            st.stop()
-        else:
-            exam_id = next(e["id"] for e in exams if e["name"] == exam_choice)
+        exam_names = [e["name"] for e in exams]
+        exam_index = 0
+        if st.session_state["ep_exam_id"]:
+            sel_name = id_to_name(st.session_state["ep_exam_id"])
+            if sel_name in exam_names:
+                exam_index = exam_names.index(sel_name)
 
-        # Topics under chosen exam
-        topics = [f for f in all_folders if f.get("parent_id") == exam_id]
-        topic_choice = st.selectbox(
-            "Topic folder",
-            ["(create new)"] + [t["name"] for t in topics],
-        )
-        if topic_choice == "(create new)":
-            new_topic = st.text_input("New topic name (e.g., Kinematics)")
-            if st.button("Create Topic"):
-                try:
-                    tp = create_folder(new_topic.strip(), exam_id)
-                    st.session_state["active_folder_id"] = tp["id"]
-                    st.success("Topic created.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Create failed: {e}")
+        cols = st.columns([3,1])
+        exam_choice = cols[0].selectbox("Exam folder", ["(create new)"] + exam_names, index=exam_index+1 if exam_names else 0, key="ep_exam_choice")
+        if cols[1].button("New exam"):
+            new_exam = st.text_input("New exam name", key="ep_new_exam_name", placeholder="e.g., May 2026 Session")
+            create_exam_click = st.button("Create Exam", key="ep_create_exam_go")
+            if create_exam_click:
+                n = st.session_state.get("ep_new_exam_name", "").strip()
+                if not n:
+                    st.warning("Enter an exam name.")
+                else:
+                    try:
+                        ex = create_folder(n, subject_id)
+                        st.session_state["ep_exam_id"] = ex["id"]
+                        st.session_state["ep_topic_id"] = None
+                        st.session_state["active_folder_id"] = ex["id"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+
+        if exam_choice != "(create new)" and exam_names:
+            st.session_state["ep_exam_id"] = next(e["id"] for e in exams if e["name"] == exam_choice)
+
+        exam_id = st.session_state["ep_exam_id"]
+        if not exam_id:
             st.stop()
-        else:
-            topic_id = next(t["id"] for t in topics if t["name"] == topic_choice)
+
+        # ----- TOPIC -----
+        topics = [f for f in all_folders if f.get("parent_id") == exam_id]
+        topic_names = [t["name"] for t in topics]
+        topic_index = 0
+        if st.session_state["ep_topic_id"]:
+            sel_name = id_to_name(st.session_state["ep_topic_id"])
+            if sel_name in topic_names:
+                topic_index = topic_names.index(sel_name)
+
+        cols = st.columns([3,1])
+        topic_choice = cols[0].selectbox("Topic folder", ["(create new)"] + topic_names, index=topic_index+1 if topic_names else 0, key="ep_topic_choice")
+        if cols[1].button("New topic"):
+            new_topic = st.text_input("New topic name", key="ep_new_topic_name", placeholder="e.g., Kinematics")
+            create_topic_click = st.button("Create Topic", key="ep_create_topic_go")
+            if create_topic_click:
+                n = st.session_state.get("ep_new_topic_name", "").strip()
+                if not n:
+                    st.warning("Enter a topic name.")
+                else:
+                    try:
+                        tp = create_folder(n, exam_id)
+                        st.session_state["ep_topic_id"] = tp["id"]
+                        st.session_state["active_folder_id"] = tp["id"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+
+        if topic_choice != "(create new)" and topic_names:
+            st.session_state["ep_topic_id"] = next(t["id"] for t in topics if t["name"] == topic_choice)
+
+        topic_id = st.session_state["ep_topic_id"]
+        if not topic_id:
+            st.stop()
 
         st.markdown("---")
         st.subheader("Upload a PDF for this topic")
@@ -228,9 +286,8 @@ with tabs[0]:
                         st.error(f"Summarization failed: {e}")
                         st.stop()
 
-                # Save three items
                 try:
-                    title = data.get("title") or f"{topic_choice} Summary"
+                    title = data.get("title") or f"{id_to_name(topic_id) or 'Topic'} Summary"
                     save_item("summary", title, data, topic_id)
 
                     fcs = data.get("flashcards", [])
@@ -245,7 +302,6 @@ with tabs[0]:
                 except Exception as e:
                     st.error(f"Save failed: {e}")
 
-                # Show quick preview
                 st.markdown("### Preview")
                 st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
                 if data.get("sections"):
@@ -255,7 +311,8 @@ with tabs[0]:
                 if data.get("flashcards"):
                     st.markdown(f"**Flashcards:** {len(data['flashcards'])}")
                 if data.get("exam_questions"):
-                    st.markdown(f"**Quiz questions:** {len(data['exam_questions'])}")
+                    st.markdown(f**"**Quiz questions:** {len(data['exam_questions'])}")
+
 
 # ---------- Tab 2: Quick Study ----------
 with tabs[1]:
@@ -358,4 +415,5 @@ with tabs[2]:
                                 st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
+
 
