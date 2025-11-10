@@ -4,53 +4,56 @@ from llm import summarize_text
 from auth_rest import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
 st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
+st.caption("Build tag: 2025-11-10-2")
 
 # ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
-st.sidebar.caption("Login to save your notes & track progress.")
+st.sidebar.caption("Log in to save notes & track progress.")
 
 if "sb_user" not in st.session_state:
-    with st.sidebar.expander("Log in", expanded=True):
-        login_email = st.text_input("Email", key="login_email")
-        login_pwd = st.text_input("Password", type="password", key="login_pwd")
-        if st.button("Sign in", use_container_width=True):
-            try:
-                _, res = sign_in(login_email, login_pwd)
-                st.experimental_rerun()
-            except Exception as e:
-                st.sidebar.error(f"Sign-in failed: {e}")
+    st.sidebar.subheader("Sign in")
+    login_email = st.sidebar.text_input("Email", key="login_email")
+    login_pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
+    if st.sidebar.button("Sign in", use_container_width=True):
+        try:
+            sign_in(login_email, login_pwd)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Sign-in failed: {e}")
 
-    with st.sidebar.expander("Create account"):
-        reg_email = st.text_input("Email", key="reg_email")
-        reg_pwd = st.text_input("Password", type="password", key="reg_pwd")
-        if st.button("Sign up", use_container_width=True):
-            try:
-                _, res = sign_up(reg_email, reg_pwd)
-                st.sidebar.success("Account created. Check your inbox if email confirmation is required, then sign in.")
-            except Exception as e:
-                st.sidebar.error(f"Sign-up failed: {e}")
+    st.sidebar.subheader("Create account")
+    reg_email = st.sidebar.text_input("New email", key="reg_email")
+    reg_pwd = st.sidebar.text_input("New password", type="password", key="reg_pwd")
+    if st.sidebar.button("Sign up", use_container_width=True):
+        try:
+            # REST version returns a single JSON object (do not unpack)
+            sign_up(reg_email, reg_pwd)
+            st.sidebar.success(
+                "Account created. If email confirmation is required, check your inbox, "
+                "then sign in above."
+            )
+        except Exception as e:
+            st.sidebar.error(f"Sign-up failed: {e}")
 else:
     st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
     if st.sidebar.button("Sign out", use_container_width=True):
         sign_out()
-        st.experimental_rerun()
+        st.rerun()
 
-    # List existing summaries
     st.sidebar.markdown("---")
     st.sidebar.subheader("My Summaries")
     try:
-        res = list_summaries(limit=25)
-        rows = res.data or []
+        rows = list_summaries(limit=25)
         for row in rows:
             label = f"• {row['title']}  ({row['created_at'][:10]})"
             if st.sidebar.button(label, key=row["id"]):
                 try:
-                    doc = get_summary(row["id"]).data
-                    st.session_state["loaded_summary"] = doc  # show on main pane
-                    st.experimental_rerun()
+                    doc = get_summary(row["id"])
+                    st.session_state["loaded_summary"] = doc
+                    st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Load failed: {e}")
-    except Exception as e:
+    except Exception:
         st.sidebar.info("No saved summaries yet.")
 
 # ---------------- Main UI ----------------
@@ -63,7 +66,7 @@ detail = st.slider("Detail level (more = longer output)", 1, 5, 3)
 
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
-# If a summary was loaded from sidebar, render it
+# Render a loaded summary (from sidebar)
 if "loaded_summary" in st.session_state and not uploaded:
     data = st.session_state.pop("loaded_summary")
     st.subheader(data.get("title", "Summary"))
@@ -119,6 +122,7 @@ if uploaded:
             try:
                 data = summarize_text(text, audience=audience, detail=detail)
             except TypeError:
+                # Fallback if an older llm.py without 'detail' is live
                 data = summarize_text(text, audience=audience)
             except Exception as e:
                 st.error(f"Summarization failed: {e}")
@@ -160,8 +164,8 @@ if uploaded:
         if qs:
             st.markdown("## Exam-Style Questions")
             for q in qs:
-                st.markdown(f"**Q:** {q.get('question','')}")
-                st.markdown(f"**Model answer:** {q.get('model_answer','')}")
+                st.markdown(f"**Q:** {q.get("question","")}")
+                st.markdown(f"**Model answer:** {q.get("model_answer","")}")
                 for pt in q.get("markscheme_points", []):
                     st.markdown(f"- {pt}")
                 st.markdown("---")
@@ -184,47 +188,3 @@ if uploaded:
                     st.error(f"Save failed: {e}")
         else:
             st.info("Log in (left sidebar) to save this to your account.")
-
-        # Markdown export
-        md_lines = [f"# {data.get('title','Summary')}", f"**TL;DR**: {data.get('tl_dr','')}", ""]
-        for sec in data.get("sections", []):
-            md_lines.append(f"## {sec.get('heading','Section')}")
-            for b in sec.get("bullets", []):
-                md_lines.append(f"- {b}")
-            md_lines.append("")
-        if kts:
-            md_lines.append("## Key Terms")
-            for kt in kts:
-                md_lines.append(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
-            md_lines.append("")
-        if forms:
-            md_lines.append("## Formulas")
-            for f in forms:
-                md_lines.append(f"- **{f.get('name','')}**: {f.get('expression','')} — {f.get('meaning','')}")
-            md_lines.append("")
-        if exs:
-            md_lines.append("## Worked Examples")
-            for e in exs:
-                md_lines.append(f"- {e}")
-            md_lines.append("")
-        if pits:
-            md_lines.append("## Common Pitfalls")
-            for p in pits:
-                md_lines.append(f"- {p}")
-            md_lines.append("")
-        if qs:
-            md_lines.append("## Exam-Style Questions")
-            for q in qs:
-                md_lines.append(f"**Q:** {q.get('question','')}")
-                md_lines.append(f"**Model answer:** {q.get('model_answer','')}")
-                for pt in q.get("markscheme_points", []):
-                    md_lines.append(f"- {pt}")
-                md_lines.append("")
-        if fcs:
-            md_lines.append("## Flashcards")
-            for c in fcs:
-                md_lines.append(f"- Front: {c.get('front','')}")
-                md_lines.append(f"  Back: {c.get('back','')}")
-            md_lines.append("")
-        md_content = "\n".join(md_lines)
-        st.download_button("⬇️ Download Markdown", md_content, file_name="summary.md")
