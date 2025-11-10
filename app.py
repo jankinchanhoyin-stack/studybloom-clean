@@ -305,8 +305,8 @@ if "sb_user" not in st.session_state:
             if remember and "sb_user" in st.session_state:
                 tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
                 if tok:
-                    cookies.set("sb_access", tok)
-                    cookies.set("sb_email", email or "")
+                    cookies["sb_access"] = tok
+                    cookies["sb_email"] = email or ""
                     cookies.save()
             st.rerun()
         except Exception as e: st.sidebar.error(str(e))
@@ -320,7 +320,11 @@ else:
     st.sidebar.success(f"Signed in as {st.session_state['sb_user']['user'].get('email','account')}")
     if st.sidebar.button("Sign out", use_container_width=True, key="logout_btn"):
         # clear cookies too
-        cookies.delete("sb_access"); cookies.delete("sb_email"); cookies.save()
+        if "sb_access" in cookies:
+            del cookies["sb_access"]
+        if "sb_email" in cookies:
+            del cookies["sb_email"]
+        cookies.save()
         sign_out(); st.rerun()
 
 # ---------------- Load folders ----------------
