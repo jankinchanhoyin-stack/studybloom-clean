@@ -156,3 +156,96 @@ def get_summary(summary_id: str):
         raise RuntimeError("Summary not found.")
     return rows[0]
 
+# ---------- Folder & Item helpers (REST) ----------
+def create_folder(name: str, parent_id: Optional[str] = None):
+    url, _ = _get_keys()
+    token, user = _require_user()
+    payload = {"user_id": user["id"], "name": name}
+    if parent_id:
+        payload["parent_id"] = parent_id
+    r = requests.post(f"{url}/rest/v1/folders",
+                      headers={**_headers(token), "Prefer": "return=representation"},
+                      json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()[0] if isinstance(r.json(), list) and r.json() else r.json()
+
+def list_folders():
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.get(f"{url}/rest/v1/folders",
+                     headers=_headers(token),
+                     params={"select": "id,name,parent_id,created_at", "order": "created_at.asc"},
+                     timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+def delete_folder(folder_id: str):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.delete(f"{url}/rest/v1/folders",
+                        headers=_headers(token),
+                        params={"id": f"eq.{folder_id}"},
+                        timeout=20)
+    r.raise_for_status()
+    return True
+
+def save_item(kind: str, title: str, data: dict, folder_id: Optional[str]):
+    url, _ = _get_keys()
+    token, user = _require_user()
+    payload = {
+        "user_id": user["id"],
+        "kind": kind,
+        "title": title or "Untitled",
+        "data": data,
+        "folder_id": folder_id
+    }
+    r = requests.post(f"{url}/rest/v1/items",
+                      headers={**_headers(token), "Prefer": "return=representation"},
+                      json=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()[0] if isinstance(r.json(), list) and r.json() else r.json()
+
+def list_items(folder_id: Optional[str] = None, limit: int = 100):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    params = {"select": "id,kind,title,created_at,folder_id", "order": "created_at.desc", "limit": str(limit)}
+    if folder_id:
+        params["folder_id"] = f"eq.{folder_id}"
+    r = requests.get(f"{url}/rest/v1/items", headers=_headers(token), params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+def get_item(item_id: str):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.get(f"{url}/rest/v1/items",
+                     headers=_headers(token),
+                     params={"id": f"eq.{item_id}", "select": "*"},
+                     timeout=20)
+    r.raise_for_status()
+    rows = r.json()
+    if not rows:
+        raise RuntimeError("Item not found.")
+    return rows[0]
+
+def move_item(item_id: str, new_folder_id: Optional[str]):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.patch(f"{url}/rest/v1/items",
+                       headers={**_headers(token), "Prefer": "return=representation"},
+                       params={"id": f"eq.{item_id}"},
+                       json={"folder_id": new_folder_id},
+                       timeout=20)
+    r.raise_for_status()
+    return r.json()[0] if isinstance(r.json(), list) and r.json() else r.json()
+
+def delete_item(item_id: str):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.delete(f"{url}/rest/v1/items",
+                        headers=_headers(token),
+                        params={"id": f"eq.{item_id}"},
+                        timeout=20)
+    r.raise_for_status()
+    return True
+
