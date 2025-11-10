@@ -155,3 +155,4 @@ def get_summary(summary_id: str):
     if not rows:
         raise RuntimeError("Summary not found.")
     return rows[0]
+
