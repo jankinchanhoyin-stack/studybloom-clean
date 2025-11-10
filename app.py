@@ -1,13 +1,26 @@
+import streamlit as st
+import sys  # optional for version caption
+
+# >>> MUST be first Streamlit call <<<
+st.set_page_config(page_title="StudyBloom", page_icon="📚")
+
+# (Optional: debug Python version so we can see it on the page)
+st.caption(f"Python: {sys.version.split()[0]}")
+
+# now do other imports that may *reference* streamlit,
+# but they must not call st.* at import time
 import time
 import datetime as dt
-import streamlit as st
 import requests
-
-import sys
-st.caption(f"Python: {sys.version.split()[0]}")
 
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
+from auth_rest import (
+    sign_in, sign_up, sign_out,
+    save_item, list_items, get_item, move_item, delete_item,
+    create_folder, list_folders, delete_folder
+)
+
 
 from auth_rest import (
     sign_in, sign_up, sign_out,
