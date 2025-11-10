@@ -2,9 +2,7 @@ import os, json, re
 from typing import List, Dict
 from openai import OpenAI
 
-# ---------- key management ----------
 def _get_api_key():
-    # Prefer Streamlit secrets in the cloud
     try:
         import streamlit as st
         k = st.secrets.get("OPENAI_API_KEY")
@@ -12,7 +10,6 @@ def _get_api_key():
             return k
     except Exception:
         pass
-    # Fallback to .env locally
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -26,7 +23,6 @@ def get_client():
         raise RuntimeError("OPENAI_API_KEY not found in Streamlit Secrets or environment.")
     return OpenAI(api_key=key)
 
-# ---------- helpers ----------
 def _parse_json_loose(text: str) -> dict:
     try:
         return json.loads(text)
@@ -49,7 +45,6 @@ def _chunk_text(text: str, chunk_chars: int = 9000, overlap: int = 500) -> List[
         i += max(1, chunk_chars - overlap)
     return chunks
 
-# ---------- prompts ----------
 SCHEMA_DESCRIPTION = (
     "Return ONLY JSON with keys exactly:\n"
     "title (string),\n"
@@ -65,11 +60,10 @@ SCHEMA_DESCRIPTION = (
 )
 
 def _chunk_summary_prompt(chunk: str, audience: str, detail: int) -> List[Dict]:
-    # scale output sizes with detail slider
-    q_count = min(8, 3 + detail)          # exam questions
-    fc_count = min(30, 8 + detail * 4)    # flashcards
-    ex_count = min(5, 1 + detail // 2)    # examples
-    pit_count = min(8, 3 + detail)        # pitfalls
+    q_count = min(8, 3 + detail)
+    fc_count = min(30, 8 + detail * 4)
+    ex_count = min(5, 1 + detail // 2)
+    pit_count = min(8, 3 + detail)
 
     sys = (
         "You are a meticulous study-note generator for exam prep. "
@@ -109,20 +103,14 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int) -> List
     )
     return [{"role":"system","content":sys},{"role":"user","content":user}]
 
-# ---------- public API ----------
 def ask_gpt(prompt: str) -> str:
     client = get_client()
     r = client.responses.create(model="gpt-4o-mini", input=prompt)
     return r.output_text
 
 def summarize_text(text: str, audience: str = "university", detail: int = 3) -> dict:
-    """
-    Map-reduce: if long, summarise chunks then merge into a rich final JSON.
-    audience: 'university' or 'high school'; detail: 1..5
-    """
     client = get_client()
     chunks = _chunk_text(text, chunk_chars=9000, overlap=500)
-
     partials = []
     for ch in chunks:
         msgs = _chunk_summary_prompt(ch, audience, detail)

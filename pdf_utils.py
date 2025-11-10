@@ -1,10 +1,8 @@
+# pdf_utils.py (for PyPDF2)
 import io
-from pypdf import PdfReader
+from PyPDF2 import PdfReader
 
 def extract_pdf_text(file_bytes: bytes, max_pages: int = 30) -> str:
-    """
-    Extract plain text from a PDF (cap pages for cost control).
-    """
     reader = PdfReader(io.BytesIO(file_bytes))
     pages = min(len(reader.pages), max_pages)
     parts = []
