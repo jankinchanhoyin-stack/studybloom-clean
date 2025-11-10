@@ -1,9 +1,8 @@
 # llm.py
 import os, json, re
-from typing import List
+from typing import List, Dict, Any
 
 def _get_api_key():
-    # Streamlit first, then env
     try:
         import streamlit as st
         k = st.secrets.get("OPENAI_API_KEY")
@@ -68,18 +67,25 @@ SCHEMA_DESCRIPTION = (
     "No prose before or after the JSON."
 )
 
+def _subject_rules(subject: str) -> str:
+    s = (subject or "").lower()
+    if "math" in s or "mathemat" in s:
+        return (
+            "For Mathematics: produce calculation/past-paper style questions only; "
+            "avoid essays. Prefer LaTeX in formulas.latex (a^2 -> a^{2}, "
+            "fractions \\frac{a}{b}, roots \\sqrt{}, products \\cdot, vectors \\vec{}). "
+            "Keep model answers concise with mark-scheme points."
+        )
+    return (
+        "Ensure exam_questions match the subject; avoid off-topic questions. "
+        "Be concrete with definitions, processes and key facts."
+    )
+
 def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
     q_count = min(8, 3 + detail)
     fc_count = min(30, 8 + detail * 4)
     ex_count = min(5, 1 + detail // 2)
     pit_count = min(8, 3 + detail)
-
-    # Subject-aware rules. For math, prefer LaTeX.
-    subj_rules = (
-        "If the subject is Mathematics or similar, output formulas in LaTeX in the 'latex' field "
-        "(e.g., a^2 becomes a^{2}; fractions as \\frac{a}{b}; roots as \\sqrt{...}; vectors with \\vec{}). "
-        "For exam_questions, ensure they are strictly relevant to the subject."
-    )
 
     sys = (
         "You are a meticulous study-note generator for exam prep. "
@@ -92,11 +98,10 @@ def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Requirements:\n"
         f"- Provide ~{ex_count} worked example(s) if possible.\n"
-        f"- Include ~{pit_count} common_pitfalls (typical misconceptions).\n"
+        f"- Include ~{pit_count} common_pitfalls.\n"
         f"- Include ~{q_count} exam_questions with concise model answers and point-based markscheme_points.\n"
-        f"- Include ~{fc_count} flashcards (front: question/term; back: definition/answer).\n"
-        "- All questions must be appropriate for the SUBJECT only.\n"
-        f"- {subj_rules}\n\n"
+        f"- Include ~{fc_count} flashcards.\n"
+        f"- {_subject_rules(subject)}\n\n"
         f"CONTENT (chunk):\n{chunk}"
     )
     return [{"role": "system", "content": sys}, {"role": "user", "content": user}]
@@ -126,7 +131,6 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int, subject
 def _call_model(client, messages) -> str:
     model = "gpt-4o-mini"
     if _supports_responses(client):
-        # Responses API path
         resp = client.responses.create(model=model, input=messages)
         try:
             return resp.output_text
@@ -136,13 +140,11 @@ def _call_model(client, messages) -> str:
             except Exception:
                 return ""
     else:
-        # Chat Completions path
         try:
             import openai as old
             r = old.ChatCompletion.create(model=model, messages=messages, temperature=0.2)
             return r["choices"][0]["message"]["content"]
         except Exception:
-            # Newer v1 client without .responses
             r = client.chat.completions.create(model=model, messages=messages, temperature=0.2)
             return r.choices[0].message.content
 
@@ -154,13 +156,79 @@ def summarize_text(text: str, audience: str = "university", detail: int = 3, sub
         msgs = _chunk_summary_prompt(ch, audience, detail, subject)
         out = _call_model(client, msgs) or ""
         partials.append(_parse_json_loose(out))
-
     if len(partials) == 1:
         return partials[0]
-
     msgs = _merge_prompt(partials, audience, detail, subject)
     out = _call_model(client, msgs) or ""
     return _parse_json_loose(out)
+
+# --------- AI grading for free-text quiz answers ----------
+def grade_free_answer(question: str, model_answer: str, markscheme: List[str], user_answer: str, subject: str = "General") -> Dict[str, Any]:
+    """
+    Returns: {"correct": bool, "score": int, "max_points": int, "feedback": str}
+    """
+    client = get_client()
+    max_points = max(5, min(10, len(markscheme) or 5))  # heuristic
+    sys = (
+        "You are a strict but fair examiner. Score the student's answer against the model answer "
+        "and mark-scheme points. Accept equivalent phrasing and equivalent maths/units. "
+        "Return ONLY JSON: {\"correct\": bool, \"score\": int, \"max_points\": int, \"feedback\": string}."
+    )
+    user = (
+        f"SUBJECT: {subject}\n"
+        f"QUESTION: {question}\n\n"
+        f"MODEL_ANSWER: {model_answer}\n"
+        f"MARK_SCHEME_POINTS: {json.dumps(markscheme)}\n\n"
+        f"STUDENT_ANSWER: {user_answer}\n"
+        f"MAX_POINTS: {max_points}\n"
+        "Rules:\n"
+        "- Map student's content to mark-scheme points.\n"
+        "- Don't nit-pick wording if the idea/calculation is correct.\n"
+        "- If the answer is largely correct but missing minor detail, give partial credit.\n"
+        "- Respond ONLY with the JSON."
+    )
+    messages = [{"role":"system","content":sys},{"role":"user","content":user}]
+    out = _call_model(client, messages) or ""
+    try:
+        data = json.loads(out)
+        data["max_points"] = int(max_points)
+        data["score"] = int(max(0, min(max_points, data.get("score",0))))
+        data["correct"] = bool(data.get("correct", data["score"] >= max_points*0.7))
+        data["feedback"] = str(data.get("feedback",""))
+        return data
+    except Exception:
+        return {"correct": False, "score": 0, "max_points": max_points, "feedback": "Could not parse grading response."}
+
+# --------- Generate a NEW quiz from existing notes ----------
+def generate_quiz_from_notes(notes: dict, subject: str = "General", audience: str = "high school", num_questions: int = 8) -> List[Dict[str, Any]]:
+    """
+    notes: the 'data' of a saved summary (sections, key_terms, formulas, etc.)
+    Returns a list of exam_questions.
+    """
+    client = get_client()
+    sys = (
+        "You generate exam-style questions from provided study notes. "
+        "Return ONLY JSON array exam_questions with objects: "
+        "{question, model_answer, markscheme_points}."
+    )
+    user = (
+        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n"
+        f"NUM_QUESTIONS: {num_questions}\n"
+        f"{_subject_rules(subject)}\n\n"
+        f"NOTES_JSON:\n{json.dumps(notes)[:120000]}"
+    )
+    messages = [{"role":"system","content":sys},{"role":"user","content":user}]
+    out = _call_model(client, messages) or ""
+    try:
+        data = json.loads(out)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "exam_questions" in data:
+            return data["exam_questions"]
+    except Exception:
+        pass
+    return []
+
 
 
 
