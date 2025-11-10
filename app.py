@@ -1,14 +1,17 @@
 # app.py
-# ---------- MUST be first ----------
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
-# ---------- Imports ----------
 import sys, requests
 from typing import Optional, List, Dict, Tuple
 
 from pdf_utils import extract_any
-from llm import summarize_text, grade_free_answer, generate_quiz_from_notes
+from llm import (
+    summarize_text_fast, summarize_text,  # both available
+    generate_quiz_from_notes_async, generate_quiz_from_notes,
+    generate_flashcards_from_notes,
+    grade_free_answer_fast,
+)
 from auth_rest import (
     sign_in, sign_up, sign_out,
     save_item, list_items, get_item, move_item, delete_item,
@@ -17,12 +20,12 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: resources-in-tab + all-resources + compact-buttons")
+st.caption(f"Python {sys.version.split()[0]} • Build: fast+mcq")
 
-# ---------- Query helpers ----------
+# ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
-    try:        return dict(st.query_params)
-    except:     return st.experimental_get_query_params()
+    try: return dict(st.query_params)
+    except: return st.experimental_get_query_params()
 
 def _set_params(**kwargs):
     try:
@@ -31,20 +34,12 @@ def _set_params(**kwargs):
     except Exception:
         st.experimental_set_query_params(**kwargs)
 
-def _clear_params(): _set_params()
-
-# ---------- Supabase REST (rename only) ----------
+# ---------------- Supabase rename helpers ----------------
 def _sb_headers():
     url = st.secrets.get("SUPABASE_URL")
     key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-    if not url or not key: raise RuntimeError("Missing SUPABASE_URL / SUPABASE_KEY in secrets.")
-    return url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json", "Prefer": "return=representation"}
-
-def rename_folder(folder_id: str, new_name: str) -> dict:
-    url, h = _sb_headers()
-    r = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}", json={"name": new_name}, headers=h, timeout=20)
-    r.raise_for_status(); data = r.json()
-    return data[0] if isinstance(data, list) and data else {}
+    if not url or not key: raise RuntimeError("Missing SUPABASE_URL / SUPABASE_KEY")
+    return url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type":"application/json", "Prefer":"return=representation"}
 
 def rename_item(item_id: str, new_title: str) -> dict:
     url, h = _sb_headers()
@@ -52,12 +47,18 @@ def rename_item(item_id: str, new_title: str) -> dict:
     r.raise_for_status(); data = r.json()
     return data[0] if isinstance(data, list) and data else {}
 
-# ---------- Progress ----------
+def rename_folder(folder_id: str, new_name: str) -> dict:
+    url, h = _sb_headers()
+    r = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}", json={"name": new_name}, headers=h, timeout=20)
+    r.raise_for_status(); data = r.json()
+    return data[0] if isinstance(data, list) and data else {}
+
+# ---------------- Progress calc ----------------
 def compute_topic_progress(topic_folder_id: str) -> float:
     try:
         items = list_items(topic_folder_id, limit=500)
-        quiz_ids   = [it["id"] for it in items if it["kind"] == "quiz"]
-        flash_ids  = [it["id"] for it in items if it["kind"] == "flashcards"]
+        quiz_ids = [it["id"] for it in items if it["kind"]=="quiz"]
+        flash_ids = [it["id"] for it in items if it["kind"]=="flashcards"]
 
         quiz_score = 0.0
         if quiz_ids:
@@ -68,7 +69,7 @@ def compute_topic_progress(topic_folder_id: str) -> float:
                 if qid not in latest: latest[qid] = (at["correct"], at["total"])
             if latest:
                 ratios = [(c/t) if t else 0 for (c,t) in latest.values()]
-                quiz_score = sum(ratios) / len(ratios)
+                quiz_score = sum(ratios)/len(ratios)
 
         flash_score = 0.0
         if flash_ids:
@@ -81,13 +82,14 @@ def compute_topic_progress(topic_folder_id: str) -> float:
     except Exception:
         return 0.0
 
-# ---------- Renderers ----------
+# ---------------- Renderers ----------------
 def render_summary(data: dict):
     st.subheader("📝 Notes")
     st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
     for sec in (data.get("sections") or []):
         st.markdown(f"### {sec.get('heading','Section')}")
-        for b in sec.get("bullets",[]) or []: st.markdown(f"- {b}")
+        for b in sec.get("bullets",[]) or []:
+            st.markdown(f"- {b}")
     if data.get("key_terms"):
         st.markdown("## Key Terms")
         for kt in data["key_terms"]:
@@ -102,12 +104,6 @@ def render_summary(data: dict):
                 except: st.code(expr)
             else:
                 st.markdown(f"- **{name}**: `{expr}` — {meaning}")
-    if data.get("examples"):
-        st.markdown("## Worked Examples")
-        for e in data["examples"]: st.markdown(f"- {e}")
-    if data.get("common_pitfalls"):
-        st.markdown("## Common Pitfalls")
-        for p in data["common_pitfalls"]: st.markdown(f"- {p}")
 
 def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, key_prefix="fc"):
     st.subheader("🧠 Flashcards")
@@ -159,6 +155,11 @@ def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, 
         st.rerun()
 
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
+    """
+    Supports:
+      - Free-response: {question, model_answer, markscheme_points[]}
+      - MCQ:           {question, options[], correct_index, explanation}
+    """
     st.subheader("🧪 Quiz")
     if not questions: st.caption("No questions found."); return
     st.session_state.setdefault(f"{key_prefix}_i",0)
@@ -168,66 +169,93 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
     st.session_state.setdefault(f"{key_prefix}_history",[])
     i = st.session_state[f"{key_prefix}_i"]; i = max(0, min(i, len(questions)-1)); st.session_state[f"{key_prefix}_i"]=i
     q = questions[i]
+
+    is_mcq = "options" in q and isinstance(q.get("options"), list)
+
     st.progress((i+1)/len(questions), text=f"Question {i+1}/{len(questions)}")
     st.markdown(f"### {q.get('question','')}")
-    ans = st.text_area("Your answer", key=f"{key_prefix}_ans_{i}", height=120, placeholder="Type your working/answer here…")
-    colg1, colg2, colg3, colg4 = st.columns(4)
-    if colg1.button("Submit", key=f"{key_prefix}_submit"):
-        try:
-            result = grade_free_answer(
-                question=q.get("question",""),
-                model_answer=q.get("model_answer",""),
-                markscheme=q.get("markscheme_points",[]) or [],
-                user_answer=ans or "",
-                subject=subject_hint or "General",
-            )
-            st.session_state[f"{key_prefix}_graded"]=True
-            st.session_state[f"{key_prefix}_feedback"]=result.get("feedback","")
-            last = (result.get("score",0), result.get("max_points",10))
-            st.session_state[f"{key_prefix}_mark_last"]=last
-            hist = st.session_state[f"{key_prefix}_history"]
-            if len(hist) <= i: hist.append({"score": last[0], "max": last[1]})
-            else:             hist[i] = {"score": last[0], "max": last[1]}
-        except Exception as e:
-            st.error(f"Grading failed: {e}")
-    if st.session_state[f"{key_prefix}_graded"]:
-        sc, mx = st.session_state[f"{key_prefix}_mark_last"]
-        st.success(f"Score for this question: {sc} / {mx}")
-        with st.expander("Model answer & mark scheme", expanded=False):
-            st.markdown(q.get("model_answer",""))
-            for pt in q.get("markscheme_points",[]) or []: st.markdown(f"- {pt}")
-        if st.session_state[f"{key_prefix}_feedback"]: st.info(st.session_state[f"{key_prefix}_feedback"])
-    c1,c2,c3,c4 = st.columns(4)
-    if c1.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
-        st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
-    if c2.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
-        st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
+
+    if is_mcq:
+        options = q.get("options") or []
+        choice = st.radio("Choose one", options, key=f"{key_prefix}_mcq_{i}", index=None)
+        col1,col2,col3 = st.columns(3)
+        if col1.button("Submit", key=f"{key_prefix}_mcq_submit"):
+            if choice is None:
+                st.warning("Pick an option first.")
+            else:
+                correct = options.index(choice) == q.get("correct_index", -1)
+                st.session_state[f"{key_prefix}_graded"]=True
+                sc = 10 if correct else 0
+                st.session_state[f"{key_prefix}_mark_last"]=(sc,10)
+                hist = st.session_state[f"{key_prefix}_history"]
+                if len(hist)<=i: hist.append({"score": sc, "max":10})
+                else: hist[i]={"score": sc, "max":10}
+                st.success("Correct! ✅" if correct else "Not quite. ❌")
+                if q.get("explanation"):
+                    st.info(q["explanation"])
+        if col2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
+            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
+        if col3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
+            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
+    else:
+        ans = st.text_area("Your answer", key=f"{key_prefix}_ans_{i}", height=120, placeholder="Type your working/answer here…")
+        colg1, colg2, colg3, colg4 = st.columns(4)
+        if colg1.button("Submit", key=f"{key_prefix}_submit"):
+            try:
+                result = grade_free_answer_fast(
+                    q.get("question",""), q.get("model_answer",""),
+                    q.get("markscheme_points",[]) or [], ans or "", subject_hint or "General"
+                )
+                st.session_state[f"{key_prefix}_graded"]=True
+                st.session_state[f"{key_prefix}_mark_last"]=(result.get("score",0), result.get("max_points",10))
+                st.session_state[f"{key_prefix}_feedback"]=result.get("feedback","")
+                hist = st.session_state[f"{key_prefix}_history"]
+                if len(hist)<=i: hist.append({"score": result.get("score",0), "max": result.get("max_points",10)})
+                else: hist[i]={"score": result.get("score",0), "max": result.get("max_points",10)}
+            except Exception as e:
+                st.error(f"Grading failed: {e}")
+        if st.session_state[f"{key_prefix}_graded"]:
+            sc, mx = st.session_state[f"{key_prefix}_mark_last"]
+            st.success(f"Score for this question: {sc} / {mx}")
+            with st.expander("Model answer & mark scheme", expanded=False):
+                st.markdown(q.get("model_answer",""))
+                for pt in q.get("markscheme_points",[]) or []: st.markdown(f"- {pt}")
+            if st.session_state[f"{key_prefix}_feedback"]:
+                st.info(st.session_state[f"{key_prefix}_feedback"])
+        if colg2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
+            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
+        if colg3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
+            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
+
+    # Totals + save
     total_sc = sum(h.get("score",0) for h in st.session_state[f"{key_prefix}_history"])
     total_mx = sum(h.get("max",0)  for h in st.session_state[f"{key_prefix}_history"])
     st.metric("Total so far", f"{total_sc} / {total_mx or (len(questions)*10)}")
-    if c3.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
+    save_col, new_col = st.columns(2)
+    if save_col.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
         if item_id and "sb_user" in st.session_state:
             try:
                 correct = sum(1 for h in st.session_state[f"{key_prefix}_history"] if h.get("max",0) and h.get("score",0) >= 0.7*h["max"])
                 total = len(questions); save_quiz_attempt(item_id, correct, total, st.session_state[f"{key_prefix}_history"])
                 st.success(f"Attempt saved: {correct}/{total}")
-            except Exception: st.info("Attempt not saved (check quiz_attempts table).")
-    if c4.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
+            except Exception:
+                st.info("Attempt not saved (check quiz_attempts table).")
+    if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
         try:
             quiz_item = get_item(item_id); folder_id = quiz_item.get("folder_id"); subject = subject_hint or "General"
             if folder_id:
                 siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
                 if summary and summary.get("data"):
+                    # Default regenerate as MCQ for variety
                     new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8)
-                    if new_qs:
-                        created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
-                        st.success("New quiz created."); _set_params(item=created.get("id"), view="resources"); st.rerun()
-                    else: st.warning("Could not generate a new quiz from notes.")
-                else:     st.info("No summary found in this folder to generate from.")
-            else:         st.info("Folder not found for this quiz.")
-        except Exception as e: st.error(f"Re-generate failed: {e}")
+                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
+                    st.success("New quiz created."); _set_params(item=created.get("id"), view="resources"); st.rerun()
+                else: st.info("No summary found in this folder to generate from.")
+            else:     st.info("Folder not found for this quiz.")
+        except Exception as e:
+            st.error(f"Re-generate failed: {e}")
 
-# ---------- Sidebar: Auth only ----------
+# ---------------- Sidebar: Auth only ----------------
 st.sidebar.title("StudyBloom")
 st.sidebar.caption("Log in to save & organize.")
 if "sb_user" not in st.session_state:
@@ -248,52 +276,58 @@ else:
     if st.sidebar.button("Sign out", use_container_width=True, key="logout_btn"):
         sign_out(); st.rerun()
 
-# ---------- Load folders ----------
+# ---------------- Load folders ----------------
 if "sb_user" in st.session_state:
-    try:    ALL_FOLDERS = list_folders()
+    try: ALL_FOLDERS = list_folders()
     except: ALL_FOLDERS = []; st.warning("Could not load folders.")
 else:
     ALL_FOLDERS = []
 
 def _roots(rows): return [r for r in rows if not r.get("parent_id")]  # subjects
 
-# ---------- ITEM PAGE (dedicated) ----------
+# ---------------- Item PAGE ----------------
 params = _get_params()
 if "item" in params and "sb_user" in st.session_state:
     item_id = params.get("item"); 
     if isinstance(item_id, list): item_id = item_id[0]
     try:
-        full = get_item(item_id); kind = full.get("kind"); title = full.get("title") or kind.title()
+        full  = get_item(item_id)
+        kind  = full.get("kind")
+        title = full.get("title") or kind.title()
         st.title(title)
 
-        # Back → Resources tab (no extra click)
         if st.button("← Back to Resources", key="item_back_btn"):
             _set_params(view="resources"); st.rerun()
 
         data = full.get("data") or {}
         subject_hint = st.text_input("Subject (affects grading & new quizzes)", value="General", key=f"subj_{item_id}")
-        if kind == "summary":      render_summary(data or full)
-        elif kind == "flashcards": interactive_flashcards(data.get("flashcards") or [], item_id=item_id, key_prefix=f"fc_{item_id}")
-        elif kind == "quiz":       interactive_quiz(data.get("questions") or [], item_id=item_id, key_prefix=f"quiz_{item_id}", subject_hint=subject_hint)
-        else:                      st.write(data or full)
+        if kind == "summary":
+            render_summary(data or full)
+        elif kind == "flashcards":
+            interactive_flashcards(data.get("flashcards") or [], item_id=item_id, key_prefix=f"fc_{item_id}")
+        elif kind == "quiz":
+            interactive_quiz(data.get("questions") or [], item_id=item_id, key_prefix=f"quiz_{item_id}", subject_hint=subject_hint)
+        else:
+            st.write(data or full)
     except Exception as e:
         st.error(f"Could not load item: {e}")
         if st.button("← Back to Resources", key="item_back_btn2"):
             _set_params(view="resources"); st.rerun()
     st.stop()
 
-# ---------- Tabs ----------
+# ---------------- Tabs ----------------
 tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 
 # ===== Quick Study =====
 with tabs[0]:
     st.title("⚡ Quick Study")
+
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
         subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
 
-        # SUBJECT (existing OR new unique)
+        # Subject
         st.markdown("### Subject")
         make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
         subject_id = None
@@ -311,7 +345,7 @@ with tabs[0]:
             if subj_pick in subj_names:
                 subject_id = next(s["id"] for s in subjects if s["name"]==subj_pick)
 
-        # EXAM (existing OR new unique within subject)
+        # Exam
         st.markdown("### Exam")
         exam_id = None
         if subject_id:
@@ -324,7 +358,7 @@ with tabs[0]:
                     name = (new_exam or "").strip()
                     if not name: st.warning("Enter an exam name.")
                     elif name.lower() in {n.lower() for n in exam_names}:
-                        st.error("This exam already exists in the selected subject. Please use a different name.")
+                        st.error("This exam already exists under that subject.")
                     else:
                         create_folder(name, subject_id); st.success("Exam created."); st.rerun()
             else:
@@ -332,9 +366,9 @@ with tabs[0]:
                 if ex_pick in exam_names:
                     exam_id = next(e["id"] for e in exams if e["name"]==ex_pick)
         else:
-            st.caption("Pick or create a Subject first to reveal the Exam chooser.")
+            st.caption("Pick or create a Subject first to reveal Exams.")
 
-        # TOPIC (ALWAYS create new, unique within exam)
+        # Topic: ALWAYS create new
         st.markdown("### Topic")
         topic_id = None
         if exam_id:
@@ -345,10 +379,9 @@ with tabs[0]:
                 name = (new_topic or "").strip()
                 if not name: st.warning("Enter a topic name.")
                 elif name.lower() in {n.lower() for n in topic_names}:
-                    st.error("This topic already exists under the exam. Please use a different name.")
+                    st.error("This topic already exists under the exam.")
                 else:
-                    created = create_folder(name, exam_id)
-                    topic_id = created["id"]; st.success("Topic created."); st.rerun()
+                    created = create_folder(name, exam_id); topic_id = created["id"]; st.success("Topic created."); st.rerun()
         else:
             st.caption("Pick or create an Exam first to add a Topic.")
 
@@ -356,16 +389,24 @@ with tabs[0]:
         st.markdown("**Subject (free text, improves accuracy & quality):**")
         subject_hint = st.text_input("e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
                                      value="General", key="qs_subject_hint")
+
         audience_label = st.selectbox("Audience", ["University","A-Level","A-Level / IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
         aud_map = {"University":"university","A-Level":"A-Level","A-Level / IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
         audience = aud_map.get(audience_label,"high school")
         detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
 
+        # NEW: quiz type
+        st.markdown("### Quiz type")
+        quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode")
+        mcq_options = 4
+        if quiz_mode == "Multiple choice":
+            mcq_options = st.slider("MCQ options per question", 3, 6, 4, key="qs_mcq_opts")
+
         files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
                                  type=["pdf","pptx","jpg","jpeg","png","txt"], accept_multiple_files=True, key="qs_files")
 
         if files and st.button("Generate Notes + Flashcards + Quiz", type="primary", key="qs_generate_btn"):
-            # recompute latest ids; prefer just-created topic if name matches
+            # Re-resolve IDs after potential reruns
             subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
             subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
             exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
@@ -375,30 +416,64 @@ with tabs[0]:
             topic_id = None
             if st.session_state.get("qs_new_topic"):
                 for t in topics:
-                    if t["name"] == st.session_state["qs_new_topic"]: topic_id = t["id"]; break
+                    if t["name"] == st.session_state["qs_new_topic"]:
+                        topic_id = t["id"]; break
             dest_folder = topic_id or exam_id or subject_id or None
 
             prog = st.progress(0, text="Starting…")
             try:
+                # Extract
                 prog.progress(10, text="Extracting text…")
                 text = extract_any(files)
                 if not text.strip(): st.error("No text detected."); st.stop()
+
+                # Summarize (fast async)
                 prog.progress(35, text="Summarising with AI…")
-                try:    data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-                except TypeError:
-                    try: data = summarize_text(text, audience=audience, detail=detail)
-                    except TypeError: data = summarize_text(text, audience=audience)
-                prog.progress(75, text="Saving items…")
-                emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}; title = data.get("title") or "Untitled"
-                summary = save_item("summary", f"{emoji['summary']} {title}", data, dest_folder); summary_id = summary.get("id")
+                data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
+
+                # Build flashcards & quiz in parallel (async)
+                prog.progress(60, text="Generating flashcards & quiz…")
+                notes_json = data
+                # flashcards
+                cards = []
+                try:
+                    cards = asyncio.run(generate_flashcards_from_notes(notes_json, audience=audience))
+                except: pass
+
+                # quiz
+                if quiz_mode == "Multiple choice":
+                    qs = asyncio.run(generate_quiz_from_notes_async(
+                        notes_json, subject=subject_hint, audience=audience,
+                        num_questions=8, mode="mcq", mcq_options=mcq_options
+                    ))
+                else:
+                    qs = asyncio.run(generate_quiz_from_notes_async(
+                        notes_json, subject=subject_hint, audience=audience,
+                        num_questions=8, mode="free", mcq_options=4
+                    ))
+
+                # Save everything
+                prog.progress(85, text="Saving items…")
+                emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
+                title = data.get("title") or "Untitled"
+
+                summary = save_item("summary", f"{emoji['summary']} {title}", data, dest_folder)
+                summary_id = summary.get("id")
                 flash_id = quiz_id = None
-                if data.get("flashcards"):
-                    flash = save_item("flashcards", f"{emoji['flashcards']} {title} • Flashcards", {"flashcards": data["flashcards"]}, dest_folder)
+
+                if cards:
+                    flash = save_item("flashcards", f"{emoji['flashcards']} {title} • Flashcards",
+                                      {"flashcards": cards}, dest_folder)
                     flash_id = flash.get("id")
-                if data.get("exam_questions"):
-                    quiz  = save_item("quiz", f"{emoji['quiz']} {title} • Quiz", {"questions": data["exam_questions"]}, dest_folder)
-                    quiz_id = quiz.get("id")
-                prog.progress(100, text="Done!"); st.success("Saved ✅")
+
+                quiz_payload = {"questions": qs}
+                if quiz_mode == "Multiple choice":
+                    quiz_payload["type"] = "mcq"
+                quiz_item = save_item("quiz", f"{emoji['quiz']} {title} • Quiz", quiz_payload, dest_folder)
+                quiz_id = quiz_item.get("id")
+
+                prog.progress(100, text="Done!")
+                st.success("Saved ✅")
 
                 st.markdown("### Open")
                 c1,c2,c3 = st.columns(3)
@@ -411,13 +486,12 @@ with tabs[0]:
             except Exception as e:
                 st.error(f"Generation failed: {e}")
 
-# ===== Resources (in-tab, no extra click) =====
+# ===== Resources =====
 with tabs[1]:
     st.title("🧰 Resources")
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
     else:
-        # Dropdowns: Subject → Exam → Topic
         subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
         subj_pick = st.selectbox("Subject", ["— select —"]+subj_names, key="res_subj_pick")
         subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
@@ -441,11 +515,8 @@ with tabs[1]:
             st.caption("Pick an Exam to reveal Topics.")
 
         if topic_id:
-            # Topic progress
-            prog = compute_topic_progress(topic_id)
-            st.progress(prog, text=f"Topic progress: {int(prog*100)}%")
+            st.progress(compute_topic_progress(topic_id), text="Topic progress")
 
-            # Items table
             emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
             try: items = list_items(topic_id, limit=200)
             except: items = []
@@ -453,12 +524,10 @@ with tabs[1]:
             if not items: st.caption("No items yet.")
             for it in items:
                 icon = emoji.get(it["kind"], "📄")
-                # Make first column wider to prevent "Open" wrapping; compact icon buttons
                 c0,c1,c2,c3 = st.columns([8,2,1,1])
                 c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
                 if c1.button("Open", key=f"res_open_{it['id']}", use_container_width=True):
                     _set_params(item=it["id"], view="resources"); st.rerun()
-                # ✏ rename (inline input only when pressed)
                 if not st.session_state.get(f"edit_item_{it['id']}", False):
                     if c2.button("✏", key=f"res_btn_rename_{it['id']}", use_container_width=True):
                         st.session_state[f"edit_item_{it['id']}"]=True; st.rerun()
@@ -474,14 +543,13 @@ with tabs[1]:
                     try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                     except Exception as e: st.error(f"Delete failed: {e}")
 
-# ===== All Resources (newest first) =====
+# ===== All Resources (newest) =====
 with tabs[2]:
     st.title("🗂️ All Resources (Newest)")
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
     else:
         emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-        # Pull everything (no folder filter), then sort by created_at desc
         try: all_items = list_items(None, limit=1000)
         except: all_items = []
         all_items.sort(key=lambda x: x.get("created_at",""), reverse=True)
