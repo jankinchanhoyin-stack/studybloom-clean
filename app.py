@@ -3,6 +3,9 @@ from pdf_utils import extract_pdf_text
 from llm import summarize_text
 from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
+st.title("Hello Streamlit 👋")
+st.write("If you can see this, requirements are installed and the runtime is healthy.")
+
 SUPABASE_OK = True
 try:
     from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
