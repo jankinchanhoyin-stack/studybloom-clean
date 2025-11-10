@@ -327,40 +327,110 @@ if "sb_user" in st.session_state:
 else:
     ALL_FOLDERS = []
 
-# Sidebar tree (Subjects → Exams → Topics → Files)
+# Sidebar tree (Subjects → Exams → Topics → Files) — no nested expanders
 if "sb_user" in st.session_state and ALL_FOLDERS:
     st.sidebar.markdown("---")
     st.sidebar.subheader("📂 Your Library")
-    emoji_item = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-    roots = [f for f in ALL_FOLDERS if not f.get("parent_id")]
+    emoji_item = {"summary": "📄", "flashcards": "🧠", "quiz": "🧪"}
+
+    roots = [f for f in ALL_FOLDERS if not f.get("parent_id")]  # subjects
     for subj in roots:
         with st.sidebar.expander(f"📁 {subj['name']}", expanded=False):
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj["id"]]
+            # Subject-level open/rename buttons
+            sc1, sc2 = st.columns([6, 2])
+            if sc1.button("Open subject", key=f"sb_open_subject_{subj['id']}"):
+                _set_params(folder=subj["id"]); st.rerun()
+            if not st.session_state.get(f"edit_folder_{subj['id']}", False):
+                if sc2.button("Rename", key=f"sb_rename_subject_btn_{subj['id']}"):
+                    st.session_state[f"edit_folder_{subj['id']}"] = True; st.rerun()
+            else:
+                newn = st.text_input("New subject name", value=subj["name"], key=f"sb_rn_subject_{subj['id']}")
+                scc1, scc2 = st.columns(2)
+                if scc1.button("Save", key=f"sb_save_subject_{subj['id']}"):
+                    try:
+                        rename_folder(subj["id"], newn.strip())
+                        st.session_state[f"edit_folder_{subj['id']}"] = False
+                        _set_params(folder=subj["id"]); st.rerun()
+                    except Exception as e:
+                        st.sidebar.error(f"Rename failed: {e}")
+                if scc2.button("Cancel", key=f"sb_cancel_subject_{subj['id']}"):
+                    st.session_state[f"edit_folder_{subj['id']}"] = False; st.rerun()
+
+            # Exam toggle list (checkboxes, not expanders)
+            exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subj["id"]]
             for ex in exams:
-                with st.expander(f"🗂️ {ex['name']}", expanded=False):
-                    topics = [f for f in ALL_FOLDERS if f.get("parent_id")==ex["id"]]
-                    for tp in topics:
-                        with st.expander(f"🏷️ {tp['name']}", expanded=False):
-                            # Items under topic
-                            try:
-                                its = list_items(tp["id"], limit=200)
-                            except Exception:
-                                its = []
-                            for it in its:
-                                icon = emoji_item.get(it["kind"],"📄")
-                                cols = st.columns([6,1])
-                                cols[0].markdown(f"{icon} {it['title']}")
-                                if cols[1].button("Open", key=f"sb_open_item_{it['id']}"):
-                                    _set_params(item=it["id"]); st.rerun()
-                        # topic-level open
-                        if st.button("Open topic", key=f"sb_open_folder_{tp['id']}"):
-                            _set_params(folder=tp["id"]); st.rerun()
-                # exam-level open
-                if st.button("Open exam", key=f"sb_open_folder_{ex['id']}"):
+                ex_open = st.checkbox(f"🗂️ {ex['name']}", key=f"sb_toggle_exam_{ex['id']}", value=False)
+                ec1, ec2 = st.columns([6, 2])
+                if ec1.button("Open exam", key=f"sb_open_exam_{ex['id']}"):
                     _set_params(folder=ex["id"]); st.rerun()
-        # subject-level open
-        if st.sidebar.button("Open subject", key=f"sb_open_folder_{subj['id']}"):
-            _set_params(folder=subj["id"]); st.rerun()
+                if not st.session_state.get(f"edit_folder_{ex['id']}", False):
+                    if ec2.button("Rename", key=f"sb_rename_exam_btn_{ex['id']}"):
+                        st.session_state[f"edit_folder_{ex['id']}"] = True; st.rerun()
+                else:
+                    newn = st.text_input("New exam name", value=ex["name"], key=f"sb_rn_exam_{ex['id']}")
+                    ecc1, ecc2 = st.columns(2)
+                    if ecc1.button("Save", key=f"sb_save_exam_{ex['id']}"):
+                        try:
+                            rename_folder(ex["id"], newn.strip())
+                            st.session_state[f"edit_folder_{ex['id']}"] = False
+                            _set_params(folder=ex["id"]); st.rerun()
+                        except Exception as e:
+                            st.sidebar.error(f"Rename failed: {e}")
+                    if ecc2.button("Cancel", key=f"sb_cancel_exam_{ex['id']}"):
+                        st.session_state[f"edit_folder_{ex['id']}"] = False; st.rerun()
+
+                # Only show topics + files when this exam is toggled open
+                if ex_open:
+                    topics = [f for f in ALL_FOLDERS if f.get("parent_id") == ex["id"]]
+                    for tp in topics:
+                        # indent with markdown spaces
+                        st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;🏷️ **{}**".format(tp["name"]), unsafe_allow_html=True)
+                        tc1, tc2 = st.columns([6, 2])
+                        if tc1.button("Open topic", key=f"sb_open_topic_{tp['id']}"):
+                            _set_params(folder=tp["id"]); st.rerun()
+                        if not st.session_state.get(f"edit_folder_{tp['id']}", False):
+                            if tc2.button("Rename", key=f"sb_rename_topic_btn_{tp['id']}"):
+                                st.session_state[f"edit_folder_{tp['id']}"] = True; st.rerun()
+                        else:
+                            newn = st.text_input("New topic name", value=tp["name"], key=f"sb_rn_topic_{tp['id']}")
+                            tcc1, tcc2 = st.columns(2)
+                            if tcc1.button("Save", key=f"sb_save_topic_{tp['id']}"):
+                                try:
+                                    rename_folder(tp["id"], newn.strip())
+                                    st.session_state[f"edit_folder_{tp['id']}"] = False
+                                    _set_params(folder=tp["id"]): st.rerun()
+                                except Exception as e:
+                                    st.sidebar.error(f"Rename failed: {e}")
+                            if tcc2.button("Cancel", key=f"sb_cancel_topic_{tp['id']}"):
+                                st.session_state[f"edit_folder_{tp['id']}"] = False; st.rerun()
+
+                        # List items under topic
+                        try:
+                            its = list_items(tp["id"], limit=200)
+                        except Exception:
+                            its = []
+                        for it in its:
+                            icon = emoji_item.get(it["kind"], "📄")
+                            st.markdown("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{} {}".format(icon, it["title"]), unsafe_allow_html=True)
+                            ic1, ic2 = st.columns([6, 2])
+                            if ic1.button("Open", key=f"sb_open_item_{it['id']}"):
+                                _set_params(item=it["id"]); st.rerun()
+                            # rename is button-triggered
+                            if not st.session_state.get(f"edit_item_{it['id']}", False):
+                                if ic2.button("Rename", key=f"sb_rename_item_btn_{it['id']}"):
+                                    st.session_state[f"edit_item_{it['id']}"] = True; st.rerun()
+                            else:
+                                newt = st.text_input("New title", value=it["title"], key=f"sb_rn_item_{it['id']}")
+                                i1, i2 = st.columns(2)
+                                if i1.button("Save", key=f"sb_save_item_{it['id']}"):
+                                    try:
+                                        rename_item(it["id"], newt.strip())
+                                        st.session_state[f"edit_item_{it['id']}"] = False
+                                        _set_params(item=it["id"]); st.rerun()
+                                    except Exception as e:
+                                        st.sidebar.error(f"Rename failed: {e}")
+                                if i2.button("Cancel", key=f"sb_cancel_item_{it['id']}"):
+                                    st.session_state[f"edit_item_{it['id']}"] = False; st.rerun()
 
 # ---------------- Folder PAGE (full page) ----------------
 params = _get_params()
