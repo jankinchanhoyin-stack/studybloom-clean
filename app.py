@@ -3,54 +3,66 @@ from pdf_utils import extract_pdf_text
 from llm import summarize_text
 from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
+SUPABASE_OK = True
+try:
+    from supabase_client import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
+except Exception as e:
+    SUPABASE_OK = False
+    SUPABASE_ERR = str(e)
+
 st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
 
-# ---------------- Sidebar: Auth (always visible forms) ----------------
+# ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
 st.sidebar.caption("Log in to save notes & track progress.")
 
-if "sb_user" not in st.session_state:
-    st.sidebar.subheader("Sign in")
-    login_email = st.sidebar.text_input("Email", key="login_email")
-    login_pwd = st.sidebar.text_input("Password", type="password", key="login_pwd")
-    if st.sidebar.button("Sign in", use_container_width=True):
-        try:
-            _, res = sign_in(login_email, login_pwd)
-            st.experimental_rerun()
-        except Exception as e:
-            st.sidebar.error(f"Sign-in failed: {e}")
-
-    st.sidebar.subheader("Create account")
-    reg_email = st.sidebar.text_input("New email", key="reg_email")
-    reg_pwd = st.sidebar.text_input("New password", type="password", key="reg_pwd")
-    if st.sidebar.button("Sign up", use_container_width=True):
-        try:
-            _, res = sign_up(reg_email, reg_pwd)
-            st.sidebar.success("Account created. Check your email if confirmation is required, then sign in above.")
-        except Exception as e:
-            st.sidebar.error(f"Sign-up failed: {e}")
+if not SUPABASE_OK:
+    st.sidebar.warning("Auth not available. Reason: " + SUPABASE_ERR)
 else:
-    st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
-    if st.sidebar.button("Sign out", use_container_width=True):
-        sign_out()
-        st.experimental_rerun()
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("My Summaries")
-    try:
-        res = list_summaries(limit=25)
-        rows = res.data or []
-        for row in rows:
-            label = f"• {row['title']}  ({row['created_at'][:10]})"
-            if st.sidebar.button(label, key=row["id"]):
+    if "sb_user" not in st.session_state:
+        with st.sidebar.expander("Log in", expanded=True):
+            login_email = st.text_input("Email", key="login_email")
+            login_pwd = st.text_input("Password", type="password", key="login_pwd")
+            if st.button("Sign in", use_container_width=True):
                 try:
-                    doc = get_summary(row["id"]).data
-                    st.session_state["loaded_summary"] = doc
+                    _, res = sign_in(login_email, login_pwd)
                     st.experimental_rerun()
                 except Exception as e:
-                    st.sidebar.error(f"Load failed: {e}")
-    except Exception:
-        st.sidebar.info("No saved summaries yet.")
+                    st.sidebar.error(f"Sign-in failed: {e}")
+
+        with st.sidebar.expander("Create account"):
+            reg_email = st.text_input("Email", key="reg_email")
+            reg_pwd = st.text_input("Password", type="password", key="reg_pwd")
+            if st.button("Sign up", use_container_width=True):
+                try:
+                    _, res = sign_up(reg_email, reg_pwd)
+                    st.sidebar.success("Account created. Check your inbox if email confirmation is required, then sign in.")
+                except Exception as e:
+                    st.sidebar.error(f"Sign-up failed: {e}")
+    else:
+        st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
+        if st.sidebar.button("Sign out", use_container_width=True):
+            sign_out()
+            st.experimental_rerun()
+
+        # List existing summaries
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("My Summaries")
+        try:
+            res = list_summaries(limit=25)
+            rows = res.data or []
+            for row in rows:
+                label = f"• {row['title']}  ({row['created_at'][:10]})"
+                if st.sidebar.button(label, key=row["id"]):
+                    try:
+                        doc = get_summary(row["id"]).data
+                        st.session_state["loaded_summary"] = doc  # show on main pane
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.sidebar.error(f"Load failed: {e}")
+        except Exception as e:
+            st.sidebar.info("No saved summaries yet.")
 
 # ---------------- Main UI ----------------
 st.title("📚 StudyBloom — PDF Summarizer")
