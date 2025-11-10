@@ -747,5 +747,4 @@ with tabs[2]:
                 if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
                     try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                     except Exception as e: st.error(f"Delete failed: {e}")
-elete failed: {e}")
 
