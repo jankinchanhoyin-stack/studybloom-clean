@@ -1,16 +1,7 @@
-# pdf_utils.py
 import io
-
-# Try both libraries so we don't care which one gets installed
-try:
-    from pypdf import PdfReader  # preferred modern package
-except Exception:
-    from PyPDF2 import PdfReader  # fallback
+from pypdf import PdfReader  # use pypdf; requirements pin below
 
 def extract_pdf_text(file_bytes: bytes, max_pages: int = 30) -> str:
-    """
-    Extract plain text from a PDF (cap pages for cost control).
-    """
     reader = PdfReader(io.BytesIO(file_bytes))
     pages = min(len(reader.pages), max_pages)
     parts = []
@@ -20,4 +11,3 @@ def extract_pdf_text(file_bytes: bytes, max_pages: int = 30) -> str:
         except Exception:
             parts.append("")
     return "\n\n".join(parts)
-
