@@ -3,10 +3,11 @@ import streamlit as st
 import sys
 import time
 import datetime as dt
+import random
 import requests
 
 from pdf_utils import extract_pdf_text
-from llm import summarize_text  # must be the fallback version I gave you
+from llm import summarize_text  # updated llm.py below supports subject + LaTeX bias
 from auth_rest import (
     sign_in, sign_up, sign_out,
     save_item, list_items, get_item, move_item, delete_item,
@@ -15,67 +16,191 @@ from auth_rest import (
 
 # -------------------- Page config (must be FIRST Streamlit call) --------------------
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
-st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10-fviewer")
+st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10-interactive")
 
 # ============================ Viewer helpers ============================
 def render_summary(data: dict):
     st.subheader("📝 Notes")
     st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
-    sections = data.get("sections") or []
-    for sec in sections:
+
+    # Sections
+    for sec in (data.get("sections") or []):
         st.markdown(f"### {sec.get('heading', 'Section')}")
         for b in sec.get("bullets", []) or []:
             st.markdown(f"- {b}")
 
+    # Key terms
     kts = data.get("key_terms") or []
     if kts:
         st.markdown("## Key Terms")
         for kt in kts:
             st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
 
+    # Formulas (prefer LaTeX if provided)
     forms = data.get("formulas") or []
     if forms:
         st.markdown("## Formulas")
         for f in forms:
-            st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
+            name = f.get("name","")
+            expr = (f.get("latex") or f.get("expression") or "").strip()
+            meaning = f.get("meaning","")
+            if expr:
+                # If expression looks like LaTeX, render with st.latex, else as code
+                if any(s in expr for s in ["\\frac", "\\sqrt", "^", "_", "\\times", "\\cdot", "\\sum", "\\int", "\\left", "\\right"]):
+                    st.markdown(f"**{name}** — {meaning}")
+                    try:
+                        st.latex(expr)
+                    except Exception:
+                        st.code(expr)
+                else:
+                    st.markdown(f"- **{name}**: `{expr}` — {meaning}")
+            else:
+                st.markdown(f"- **{name}** — {meaning}")
 
+    # Examples
     exs = data.get("examples") or []
     if exs:
         st.markdown("## Worked Examples")
         for e in exs:
             st.markdown(f"- {e}")
 
+    # Pitfalls
     pits = data.get("common_pitfalls") or []
     if pits:
         st.markdown("## Common Pitfalls")
         for p in pits:
             st.markdown(f"- {p}")
 
-def render_flashcards(data: dict):
-    st.subheader("🧠 Flashcards")
-    # handle both shapes: {"flashcards":[...]} OR full data with .flashcards
-    flashcards = data.get("flashcards") or data.get("data", {}).get("flashcards") or []
+def interactive_flashcards(flashcards, key_prefix="fc"):
+    st.subheader("🧠 Flashcards (click Flip)")
     if not flashcards:
         st.caption("No flashcards found.")
         return
-    for i, c in enumerate(flashcards, start=1):
-        front = c.get("front", "")
-        back = c.get("back", "")
-        st.markdown(f"**{i}. Front:** {front}\n\n**Back:** {back}")
 
-def render_quiz(data: dict):
-    st.subheader("🧪 Quiz")
-    # handle both shapes: {"questions":[...]} OR full data with .exam_questions
-    qs = data.get("questions") or data.get("exam_questions") or data.get("data", {}).get("questions") or []
-    if not qs:
+    # State
+    st.session_state.setdefault(f"{key_prefix}_idx", 0)
+    st.session_state.setdefault(f"{key_prefix}_revealed", False)
+    st.session_state.setdefault(f"{key_prefix}_order", list(range(len(flashcards))))
+
+    idx = st.session_state[f"{key_prefix}_idx"]
+    revealed = st.session_state[f"{key_prefix}_revealed"]
+    order = st.session_state[f"{key_prefix}_order"]
+
+    colL, colR = st.columns([2, 1])
+    with colL:
+        st.progress((idx + 1) / len(order), text=f"Card {idx + 1} / {len(order)}")
+    with colR:
+        if st.button("🔀 Shuffle", key=f"{key_prefix}_shuffle"):
+            new_order = list(range(len(flashcards)))
+            random.shuffle(new_order)
+            st.session_state[f"{key_prefix}_order"] = new_order
+            st.session_state[f"{key_prefix}_idx"] = 0
+            st.session_state[f"{key_prefix}_revealed"] = False
+            st.rerun()
+
+    # Current card
+    card = flashcards[order[idx]]
+    st.markdown("#### Front")
+    st.info(card.get("front", ""))
+    if revealed:
+        st.markdown("#### Back")
+        st.success(card.get("back", ""))
+
+    c1, c2, c3 = st.columns(3)
+    if c1.button("◀️ Prev", disabled=(idx == 0), key=f"{key_prefix}_prev"):
+        st.session_state[f"{key_prefix}_idx"] = max(0, idx - 1)
+        st.session_state[f"{key_prefix}_revealed"] = False
+        st.rerun()
+
+    if c2.button("🔁 Flip", key=f"{key_prefix}_flip"):
+        st.session_state[f"{key_prefix}_revealed"] = not revealed
+        st.rerun()
+
+    if c3.button("Next ▶️", disabled=(idx == len(order) - 1), key=f"{key_prefix}_next"):
+        st.session_state[f"{key_prefix}_idx"] = min(len(order) - 1, idx + 1)
+        st.session_state[f"{key_prefix}_revealed"] = False
+        st.rerun()
+
+def interactive_quiz(questions, key_prefix="quiz"):
+    st.subheader("🧪 Quiz (self-marked)")
+    if not questions:
         st.caption("No questions found.")
         return
-    for i, q in enumerate(qs, start=1):
-        st.markdown(f"**Q{i}. {q.get('question','')}**")
-        st.markdown(f"**Model answer:** {q.get('model_answer','')}")
-        for pt in q.get("markscheme_points", []) or []:
-            st.markdown(f"- {pt}")
+
+    # State
+    st.session_state.setdefault(f"{key_prefix}_i", 0)
+    st.session_state.setdefault(f"{key_prefix}_reveal", False)
+    st.session_state.setdefault(f"{key_prefix}_correct", 0)
+    st.session_state.setdefault(f"{key_prefix}_history", [])  # list of dicts per Q
+
+    i = st.session_state[f"{key_prefix}_i"]
+    reveal = st.session_state[f"{key_prefix}_reveal"]
+    correct = st.session_state[f"{key_prefix}_correct"]
+    hist = st.session_state[f"{key_prefix}_history"]
+
+    st.progress((i + 1) / len(questions), text=f"Question {i + 1} / {len(questions)}")
+    q = questions[i]
+    st.markdown(f"### {q.get('question','')}")
+
+    c1, c2 = st.columns([1, 1])
+    if not reveal:
+        if c1.button("👀 Show answer", key=f"{key_prefix}_show"):
+            st.session_state[f"{key_prefix}_reveal"] = True
+            st.rerun()
+    else:
+        with st.expander("Model answer"):
+            st.markdown(q.get("model_answer", ""))
+            for pt in q.get("markscheme_points", []) or []:
+                st.markdown(f"- {pt}")
+
+        cc1, cc2 = st.columns(2)
+        if cc1.button("✅ I got it", key=f"{key_prefix}_gotit"):
+            # record
+            if len(hist) <= i:
+                hist.append({"correct": True, "qid": i})
+            else:
+                hist[i] = {"correct": True, "qid": i}
+            st.session_state[f"{key_prefix}_correct"] = correct + 1
+            st.session_state[f"{key_prefix}_reveal"] = False
+            # advance
+            if i < len(questions) - 1:
+                st.session_state[f"{key_prefix}_i"] = i + 1
+                st.rerun()
+        if cc2.button("❌ I need practice", key=f"{key_prefix}_wrong"):
+            if len(hist) <= i:
+                hist.append({"correct": False, "qid": i})
+            else:
+                hist[i] = {"correct": False, "qid": i}
+            st.session_state[f"{key_prefix}_reveal"] = False
+            if i < len(questions) - 1:
+                st.session_state[f"{key_prefix}_i"] = i + 1
+                st.rerun()
+
+    # Navigation/footer
+    c3, c4, c5 = st.columns(3)
+    c3.metric("Score", f"{correct} / {len(questions)}")
+    if c4.button("⏭️ Skip", key=f"{key_prefix}_skip", disabled=(i == len(questions) - 1)):
+        st.session_state[f"{key_prefix}_reveal"] = False
+        st.session_state[f"{key_prefix}_i"] = min(len(questions) - 1, i + 1)
+        st.rerun()
+    if c5.button("🔁 Restart", key=f"{key_prefix}_restart"):
+        st.session_state[f"{key_prefix}_i"] = 0
+        st.session_state[f"{key_prefix}_reveal"] = False
+        st.session_state[f"{key_prefix}_correct"] = 0
+        st.session_state[f"{key_prefix}_history"] = []
+        st.rerun()
+
+    # Completed?
+    if i == len(questions) - 1 and not reveal:
         st.markdown("---")
+        st.markdown("### Review")
+        if hist:
+            for j, rec in enumerate(hist, 1):
+                emoji = "✅" if rec.get("correct") else "❌"
+                oq = questions[rec["qid"]]
+                st.markdown(f"{emoji} **Q{j}:** {oq.get('question','')}")
+        else:
+            st.caption("Answer questions to see review here.")
 
 # ============================ Sidebar: Auth & Folders ============================
 st.sidebar.title("StudyBloom")
@@ -220,7 +345,7 @@ with tabs[0]:
             "Subject folder", ["(create new)"] + subj_names,
             index=subj_index + 1 if subj_names else 0, key="ep_subj_choice"
         )
-        new_subject_name = c2.text_input("New", key="ep_new_subject_name", placeholder="e.g., A-Level Physics")
+        new_subject_name = c2.text_input("New", key="ep_new_subject_name", placeholder="e.g., A-Level Mathematics")
         if c2.button("Create Subject"):
             n = (new_subject_name or "").strip()
             if not n:
@@ -293,7 +418,7 @@ with tabs[0]:
             "Topic folder", ["(create new)"] + topic_names,
             index=topic_index + 1 if topic_names else 0, key="ep_topic_choice"
         )
-        new_topic_name = c2.text_input("New", key="ep_new_topic_name", placeholder="e.g., Kinematics")
+        new_topic_name = c2.text_input("New", key="ep_new_topic_name", placeholder="e.g., Differentiation")
         if c2.button("Create Topic"):
             n = (new_topic_name or "").strip()
             if not n:
@@ -313,6 +438,9 @@ with tabs[0]:
         topic_id = st.session_state["ep_topic_id"]
         if not topic_id:
             st.stop()
+
+        # Subject name string for LLM prompt targeting (Math-only questions, etc.)
+        subject_name = id_to_name(st.session_state["ep_subject_id"], all_folders) or "General"
 
         st.markdown("---")
         st.subheader("Upload a PDF for this topic")
@@ -335,10 +463,13 @@ with tabs[0]:
 
             with st.spinner("Summarizing with AI…"):
                 try:
-                    data = summarize_text(text, audience=audience, detail=detail)
+                    data = summarize_text(text, audience=audience, detail=detail, subject=subject_name)
                 except TypeError:
-                    # if your summarize_text signature doesn’t accept detail
-                    data = summarize_text(text, audience=audience)
+                    # if your summarize_text signature doesn’t accept subject/detail
+                    try:
+                        data = summarize_text(text, audience=audience, detail=detail)
+                    except TypeError:
+                        data = summarize_text(text, audience=audience)
                 except Exception as e:
                     st.error(f"Summarization failed: {e}")
                     st.stop()
@@ -360,14 +491,21 @@ with tabs[0]:
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
-            # Show full viewers
-            t1, t2, t3 = st.tabs(["📝 Notes", "🧠 Flashcards", "🧪 Quiz"])
-            with t1:
+            # ---- AUTO-OPEN: Notes first, then interactive sections ----
+            st.markdown("### Generated Content")
+            section = st.radio(
+                "View",
+                ["📝 Notes", "🧠 Flashcards", "🧪 Quiz"],
+                index=0,  # auto-open Notes
+                horizontal=True,
+                key="post_gen_view_ep"
+            )
+            if section == "📝 Notes":
                 render_summary(data)
-            with t2:
-                render_flashcards({"flashcards": data.get("flashcards") or []})
-            with t3:
-                render_quiz({"questions": data.get("exam_questions") or []})
+            elif section == "🧠 Flashcards":
+                interactive_flashcards(data.get("flashcards") or [], key_prefix="fc_ep")
+            else:
+                interactive_quiz(data.get("exam_questions") or [], key_prefix="quiz_ep")
 
 # ---------- Tab 2: Quick Study ----------
 with tabs[1]:
@@ -386,6 +524,7 @@ with tabs[1]:
         audience_label = st.selectbox("Audience style", ["University", "A-Level / IB", "GCSE", "HKDSE"], index=0, key="aud_qs")
         audience = "university" if audience_label == "University" else "high school"
         detail = st.slider("Detail level", 1, 5, 3, key="detail_qs")
+        subject_hint = st.text_input("Subject hint (optional, e.g., 'Mathematics')", key="subject_qs")
 
         uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="u_qs")
         if uploaded and st.button("Generate & Save"):
@@ -402,9 +541,12 @@ with tabs[1]:
 
             with st.spinner("Summarizing with AI…"):
                 try:
-                    data = summarize_text(text, audience=audience, detail=detail)
+                    data = summarize_text(text, audience=audience, detail=detail, subject=(subject_hint or "General"))
                 except TypeError:
-                    data = summarize_text(text, audience=audience)
+                    try:
+                        data = summarize_text(text, audience=audience, detail=detail)
+                    except TypeError:
+                        data = summarize_text(text, audience=audience)
                 except Exception as e:
                     st.error(f"Summarization failed: {e}")
                     st.stop()
@@ -422,14 +564,21 @@ with tabs[1]:
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
-            # View immediately
-            t1, t2, t3 = st.tabs(["📝 Notes", "🧠 Flashcards", "🧪 Quiz"])
-            with t1:
+            # AUTO-OPEN: Notes first
+            st.markdown("### Generated Content")
+            section = st.radio(
+                "View",
+                ["📝 Notes", "🧠 Flashcards", "🧪 Quiz"],
+                index=0,
+                horizontal=True,
+                key="post_gen_view_qs"
+            )
+            if section == "📝 Notes":
                 render_summary(data)
-            with t2:
-                render_flashcards({"flashcards": data.get("flashcards") or []})
-            with t3:
-                render_quiz({"questions": data.get("exam_questions") or []})
+            elif section == "🧠 Flashcards":
+                interactive_flashcards(data.get("flashcards") or [], key_prefix="fc_qs")
+            else:
+                interactive_quiz(data.get("exam_questions") or [], key_prefix="quiz_qs")
 
 # ---------- Tab 3: Manage Items ----------
 with tabs[2]:
@@ -468,9 +617,9 @@ with tabs[2]:
                                 if kind == "summary":
                                     render_summary(payload or full)
                                 elif kind == "flashcards":
-                                    render_flashcards(payload)
+                                    interactive_flashcards(payload.get("flashcards") or [], key_prefix=f"fc_{it['id']}")
                                 elif kind == "quiz":
-                                    render_quiz(payload)
+                                    interactive_quiz(payload.get("questions") or [], key_prefix=f"quiz_{it['id']}")
                                 else:
                                     st.write(payload or full)
                             except Exception as e:
@@ -496,6 +645,7 @@ with tabs[2]:
                                 st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
+
 
 
 
