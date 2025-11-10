@@ -1,14 +1,23 @@
+import time
+import datetime as dt
 import streamlit as st
+import requests
+
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
-from auth_rest import sign_in, sign_up, sign_out, save_summary, list_summaries, get_summary
 
-st.set_page_config(page_title="StudyBloom • Summarizer", page_icon="📚")
-st.caption("Build tag: 2025-11-10-2")
+from auth_rest import (
+    sign_in, sign_up, sign_out,
+    save_item, list_items, get_item, move_item, delete_item,
+    create_folder, list_folders, delete_folder
+)
+
+st.set_page_config(page_title="StudyBloom", page_icon="📚")
+st.caption("Build tag: folders-2025-11-10")
 
 # ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
-st.sidebar.caption("Log in to save notes & track progress.")
+st.sidebar.caption("Log in to save, organize, and move your study materials.")
 
 if "sb_user" not in st.session_state:
     st.sidebar.subheader("Sign in")
@@ -18,173 +27,335 @@ if "sb_user" not in st.session_state:
         try:
             sign_in(login_email, login_pwd)
             st.rerun()
+        except requests.HTTPError as e:
+            st.sidebar.error(getattr(e.response, "text", str(e)))
         except Exception as e:
-            st.sidebar.error(f"Sign-in failed: {e}")
+            st.sidebar.error(f"{e}")
 
     st.sidebar.subheader("Create account")
     reg_email = st.sidebar.text_input("New email", key="reg_email")
     reg_pwd = st.sidebar.text_input("New password", type="password", key="reg_pwd")
     if st.sidebar.button("Sign up", use_container_width=True):
         try:
-            # REST version returns a single JSON object (do not unpack)
             sign_up(reg_email, reg_pwd)
-            st.sidebar.success(
-                "Account created. If email confirmation is required, check your inbox, "
-                "then sign in above."
-            )
+            st.sidebar.success("Account created. Check your email to confirm, then sign in above.")
+        except requests.HTTPError as e:
+            st.sidebar.error(getattr(e.response, "text", str(e)))
         except Exception as e:
-            st.sidebar.error(f"Sign-up failed: {e}")
+            st.sidebar.error(f"{e}")
 else:
     st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
     if st.sidebar.button("Sign out", use_container_width=True):
         sign_out()
         st.rerun()
 
+# ---------------- Sidebar: Folder Tree ----------------
+def build_tree(rows):
+    # id -> node
+    nodes = {r["id"]: {**r, "children": []} for r in rows}
+    roots = []
+    for r in rows:
+        pid = r.get("parent_id")
+        if pid and pid in nodes:
+            nodes[pid]["children"].append(nodes[r["id"]])
+        else:
+            roots.append(nodes[r["id"]])
+    return roots, nodes
+
+selected_folder = None
+all_folders = []
+if "sb_user" in st.session_state:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("My Summaries")
+    st.sidebar.subheader("📂 Folders")
     try:
-        rows = list_summaries(limit=25)
-        for row in rows:
-            label = f"• {row['title']}  ({row['created_at'][:10]})"
-            if st.sidebar.button(label, key=row["id"]):
+        all_folders = list_folders()
+        tree, node_map = build_tree(all_folders)
+
+        # Simple tree display + select
+        def render_tree(nodes, level=0):
+            global selected_folder
+            for n in nodes:
+                label = (" " * level) + f"• {n['name']}"
+                if st.sidebar.button(label, key=f"folderbtn_{n['id']}"):
+                    st.session_state["active_folder_id"] = n["id"]
+                if n["children"]:
+                    render_tree(n["children"], level + 1)
+
+        render_tree(tree)
+        selected_folder = st.session_state.get("active_folder_id")
+        if selected_folder:
+            cur = next((f for f in all_folders if f["id"] == selected_folder), None)
+            if cur:
+                st.sidebar.caption(f"Selected: **{cur['name']}**")
+
+        # Quick create controls
+        with st.sidebar.expander("New Folder"):
+            new_name = st.text_input("Folder name", key="new_folder_name")
+            parent = None
+            choices = {"(no parent)": None}
+            for f in all_folders:
+                choices[f"{f['name']}"] = f["id"]
+            parent_name = st.selectbox("Parent", list(choices.keys()))
+            parent = choices[parent_name]
+            if st.button("Create folder", use_container_width=True):
+                if not new_name.strip():
+                    st.warning("Enter a folder name.")
+                else:
+                    try:
+                        create_folder(new_name.strip(), parent)
+                        st.success("Folder created.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+
+        # Delete current folder
+        if selected_folder:
+            if st.sidebar.button("🗑️ Delete selected folder"):
                 try:
-                    doc = get_summary(row["id"])
-                    st.session_state["loaded_summary"] = doc
+                    delete_folder(selected_folder)
+                    st.session_state.pop("active_folder_id", None)
+                    st.success("Folder deleted.")
                     st.rerun()
                 except Exception as e:
-                    st.sidebar.error(f"Load failed: {e}")
-    except Exception:
-        st.sidebar.info("No saved summaries yet.")
+                    st.sidebar.error(f"Delete failed: {e}")
 
-# ---------------- Main UI ----------------
-st.title("📚 StudyBloom — PDF Summarizer")
-st.caption("Upload a lecture PDF → get focused study notes, key terms, pitfalls, exam-style Qs, and flashcards.")
+    except Exception as e:
+        st.sidebar.info("Create your first folder to organize notes.")
 
-audience_label = st.selectbox("Audience style", ["University", "A-Level / IB", "GCSE", "HKDSE"], index=0)
-audience = "university" if audience_label == "University" else "high school"
-detail = st.slider("Detail level (more = longer output)", 1, 5, 3)
+# ---------------- Main Tabs ----------------
+tabs = st.tabs(["Exam Planner", "Quick Study", "Manage Items"])
 
-uploaded = st.file_uploader("Upload PDF", type=["pdf"])
+# ---------- Tab 1: Exam Planner ----------
+with tabs[0]:
+    st.title("🗂️ Exam Planner")
+    st.write(
+        "Plan by **Subject → Exam → Topic**. Upload each topic as you revise; we'll summarize, "
+        "make **flashcards**, and **quiz questions**, and file them neatly by topic."
+    )
 
-# Render a loaded summary (from sidebar)
-if "loaded_summary" in st.session_state and not uploaded:
-    data = st.session_state.pop("loaded_summary")
-    st.subheader(data.get("title", "Summary"))
-    st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
-    for sec in data.get("sections", []):
-        st.markdown(f"### {sec.get('heading','Section')}")
-        for b in sec.get("bullets", []):
-            st.markdown(f"- {b}")
-    if data.get("key_terms"):
-        st.markdown("## Key Terms")
-        for kt in data["key_terms"]:
-            st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
-    if data.get("formulas"):
-        st.markdown("## Formulas")
-        for f in data["formulas"]:
-            st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
-    if data.get("examples"):
-        st.markdown("## Worked Examples")
-        for e in data["examples"]:
-            st.markdown(f"- {e}")
-    if data.get("common_pitfalls"):
-        st.markdown("## Common Pitfalls")
-        for p in data["common_pitfalls"]:
-            st.markdown(f"- {p}")
-    if data.get("exam_questions"):
-        st.markdown("## Exam-Style Questions")
-        for q in data["exam_questions"]:
-            st.markdown(f"**Q:** {q.get('question','')}")
-            st.markdown(f"**Model answer:** {q.get('model_answer','')}")
-            for pt in q.get("markscheme_points", []):
-                st.markdown(f"- {pt}")
-            st.markdown("---")
-    if data.get("flashcards"):
-        st.markdown("## Flashcards")
-        for c in data["flashcards"]:
-            st.markdown(f"- **Front:** {c.get('front','')}\n\n  **Back:** {c.get('back','')}")
-
-if uploaded:
-    with st.spinner("Extracting text…"):
-        pdf_bytes = uploaded.read()
-        try:
-            text = extract_pdf_text(pdf_bytes, max_pages=30)
-        except Exception as e:
-            st.error(f"PDF extraction failed: {e}")
+    if "sb_user" not in st.session_state:
+        st.info("Log in (left) to use Exam Planner.")
+    else:
+        # Pick or create Subject / Exam / Topic folders
+        st.subheader("Choose destination folders")
+        all_names = {f["id"]: f["name"] for f in all_folders}
+        # Subject = top-level (parent_id is NULL)
+        subjects = [f for f in all_folders if not f.get("parent_id")]
+        subject_choice = st.selectbox(
+            "Subject folder",
+            ["(create new)"] + [s["name"] for s in subjects],
+        )
+        if subject_choice == "(create new)":
+            new_subject = st.text_input("New subject name")
+            if st.button("Create Subject"):
+                try:
+                    subj = create_folder(new_subject.strip(), None)
+                    st.session_state["active_folder_id"] = subj["id"]
+                    st.success("Subject created.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
             st.stop()
+        else:
+            subject_id = next(s["id"] for s in subjects if s["name"] == subject_choice)
 
-    if not text.strip():
-        st.error("Couldn’t extract text from this PDF. Try another file or a text-based PDF.")
-        st.stop()
+        # Exams under chosen subject
+        exams = [f for f in all_folders if f.get("parent_id") == subject_id]
+        exam_choice = st.selectbox(
+            "Exam folder",
+            ["(create new)"] + [e["name"] for e in exams],
+        )
+        if exam_choice == "(create new)":
+            new_exam = st.text_input("New exam name (e.g., May 2026 A-Level)")
+            if st.button("Create Exam"):
+                try:
+                    ex = create_folder(new_exam.strip(), subject_id)
+                    st.session_state["active_folder_id"] = ex["id"]
+                    st.success("Exam created.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+            st.stop()
+        else:
+            exam_id = next(e["id"] for e in exams if e["name"] == exam_choice)
 
-    if st.button("Generate Summary"):
-        with st.spinner("Summarizing with AI…"):
-            try:
-                data = summarize_text(text, audience=audience, detail=detail)
-            except TypeError:
-                # Fallback if an older llm.py without 'detail' is live
-                data = summarize_text(text, audience=audience)
-            except Exception as e:
-                st.error(f"Summarization failed: {e}")
+        # Topics under chosen exam
+        topics = [f for f in all_folders if f.get("parent_id") == exam_id]
+        topic_choice = st.selectbox(
+            "Topic folder",
+            ["(create new)"] + [t["name"] for t in topics],
+        )
+        if topic_choice == "(create new)":
+            new_topic = st.text_input("New topic name (e.g., Kinematics)")
+            if st.button("Create Topic"):
+                try:
+                    tp = create_folder(new_topic.strip(), exam_id)
+                    st.session_state["active_folder_id"] = tp["id"]
+                    st.success("Topic created.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+            st.stop()
+        else:
+            topic_id = next(t["id"] for t in topics if t["name"] == topic_choice)
+
+        st.markdown("---")
+        st.subheader("Upload a PDF for this topic")
+        audience_label = st.selectbox("Audience style", ["University", "A-Level / IB", "GCSE", "HKDSE"], index=0, key="aud_ep")
+        audience = "university" if audience_label == "University" else "high school"
+        detail = st.slider("Detail level", 1, 5, 3, key="detail_ep")
+        uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="u_ep")
+
+        if uploaded:
+            with st.spinner("Extracting text…"):
+                pdf_bytes = uploaded.read()
+                try:
+                    text = extract_pdf_text(pdf_bytes, max_pages=30)
+                except Exception as e:
+                    st.error(f"PDF extraction failed: {e}")
+                    st.stop()
+            if not text.strip():
+                st.error("No text found in this PDF.")
                 st.stop()
 
-        st.subheader(data.get("title", "Summary"))
-        st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
+            if st.button("Generate Notes + Flashcards + Quiz", type="primary"):
+                with st.spinner("Summarizing with AI…"):
+                    try:
+                        data = summarize_text(text, audience=audience, detail=detail)
+                    except TypeError:
+                        data = summarize_text(text, audience=audience)
+                    except Exception as e:
+                        st.error(f"Summarization failed: {e}")
+                        st.stop()
 
-        for sec in data.get("sections", []):
-            st.markdown(f"### {sec.get('heading', 'Section')}")
-            for b in sec.get("bullets", []):
-                st.markdown(f"- {b}")
-
-        kts = data.get("key_terms", [])
-        if kts:
-            st.markdown("## Key Terms")
-            for kt in kts:
-                st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
-
-        forms = data.get("formulas", [])
-        if forms:
-            st.markdown("## Formulas")
-            for f in forms:
-                st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
-
-        exs = data.get("examples", [])
-        if exs:
-            st.markdown("## Worked Examples")
-            for e in exs:
-                st.markdown(f"- {e}")
-
-        pits = data.get("common_pitfalls", [])
-        if pits:
-            st.markdown("## Common Pitfalls")
-            for p in pits:
-                st.markdown(f"- {p}")
-
-        qs = data.get("exam_questions", [])
-        if qs:
-            st.markdown("## Exam-Style Questions")
-            for q in qs:
-                st.markdown(f"**Q:** {q.get("question","")}")
-                st.markdown(f"**Model answer:** {q.get("model_answer","")}")
-                for pt in q.get("markscheme_points", []):
-                    st.markdown(f"- {pt}")
-                st.markdown("---")
-
-        fcs = data.get("flashcards", [])
-        if fcs:
-            st.markdown("## Flashcards")
-            for c in fcs:
-                st.markdown(f"- **Front:** {c.get('front','')}\n\n  **Back:** {c.get('back','')}")
-
-        # Save to account (if logged in)
-        if "sb_user" in st.session_state:
-            if st.checkbox("Save this summary to my account", value=True):
+                # Save three items
                 try:
-                    title = data.get("title") or "Untitled"
-                    tl_dr = data.get("tl_dr") or ""
-                    save_summary(title, tl_dr, data)
-                    st.success("Saved to your account ✅")
+                    title = data.get("title") or f"{topic_choice} Summary"
+                    save_item("summary", title, data, topic_id)
+
+                    fcs = data.get("flashcards", [])
+                    if fcs:
+                        save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, topic_id)
+
+                    qs = data.get("exam_questions", [])
+                    if qs:
+                        save_item("quiz", f"{title} • Quiz", {"questions": qs}, topic_id)
+
+                    st.success("Saved: summary, flashcards, and quiz to this Topic folder ✅")
                 except Exception as e:
                     st.error(f"Save failed: {e}")
-        else:
-            st.info("Log in (left sidebar) to save this to your account.")
+
+                # Show quick preview
+                st.markdown("### Preview")
+                st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
+                if data.get("sections"):
+                    st.markdown("#### Sections")
+                    for sec in data["sections"]:
+                        st.markdown(f"- **{sec.get('heading','Section')}**")
+                if data.get("flashcards"):
+                    st.markdown(f"**Flashcards:** {len(data['flashcards'])}")
+                if data.get("exam_questions"):
+                    st.markdown(f"**Quiz questions:** {len(data['exam_questions'])}")
+
+# ---------- Tab 2: Quick Study ----------
+with tabs[1]:
+    st.title("⚡ Quick Study")
+    st.write("Just want to study? Upload anything, we’ll create notes, flashcards, and a quiz, and you can file them in any folder.")
+
+    if "sb_user" not in st.session_state:
+        st.info("Log in (left) to save your study materials.")
+    else:
+        # Choose a destination folder (any)
+        dest_id = None
+        options = ["(no folder)"] + [f["name"] for f in all_folders]
+        dest_pick = st.selectbox("Save to folder", options, index=0)
+        if dest_pick != "(no folder)":
+            dest_id = next(f["id"] for f in all_folders if f["name"] == dest_pick)
+
+        audience_label = st.selectbox("Audience style", ["University", "A-Level / IB", "GCSE", "HKDSE"], index=0, key="aud_qs")
+        audience = "university" if audience_label == "University" else "high school"
+        detail = st.slider("Detail level", 1, 5, 3, key="detail_qs")
+
+        uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="u_qs")
+        if uploaded and st.button("Generate & Save"):
+            with st.spinner("Extracting text…"):
+                pdf_bytes = uploaded.read()
+                try:
+                    text = extract_pdf_text(pdf_bytes, max_pages=30)
+                except Exception as e:
+                    st.error(f"PDF extraction failed: {e}")
+                    st.stop()
+            if not text.strip():
+                st.error("No text found in this PDF.")
+                st.stop()
+
+            with st.spinner("Summarizing with AI…"):
+                try:
+                    data = summarize_text(text, audience=audience, detail=detail)
+                except TypeError:
+                    data = summarize_text(text, audience=audience)
+                except Exception as e:
+                    st.error(f"Summarization failed: {e}")
+                    st.stop()
+
+            try:
+                title = data.get("title") or "Untitled"
+                save_item("summary", title, data, dest_id)
+                fcs = data.get("flashcards", [])
+                if fcs:
+                    save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, dest_id)
+                qs = data.get("exam_questions", [])
+                if qs:
+                    save_item("quiz", f"{title} • Quiz", {"questions": qs}, dest_id)
+                st.success("Saved: summary, flashcards, and quiz ✅")
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+
+# ---------- Tab 3: Manage Items ----------
+with tabs[2]:
+    st.title("🧰 Manage Items")
+    st.write("View, move, or delete your notes, flashcards, and quizzes.")
+
+    if "sb_user" not in st.session_state:
+        st.info("Log in to manage your items.")
+    else:
+        # Filter by folder
+        all_opt = ["(all folders)"] + [f["name"] for f in all_folders]
+        folder_filter = st.selectbox("Show items in", all_opt, index=0)
+        filter_id = None if folder_filter == "(all folders)" else next(f["id"] for f in all_folders if f["name"] == folder_filter)
+
+        try:
+            items = list_items(filter_id, limit=200)
+            if not items:
+                st.caption("No items yet.")
+            else:
+                # destination for move
+                move_choices = {"(no folder)": None}
+                for f in all_folders:
+                    move_choices[f"{f['name']}"] = f["id"]
+
+                for it in items:
+                    with st.expander(f"📄 [{it['kind']}] {it['title']} — {it['created_at'][:16].replace('T',' ')}"):
+                        st.write(f"**Type**: {it['kind']}")
+                        st.write(f"**Current folder**: {next((f['name'] for f in all_folders if f['id']==it.get('folder_id')), '—')}")
+                        cols = st.columns(3)
+                        # Move
+                        dest_name = cols[0].selectbox("Move to", list(move_choices.keys()), key=f"mv_{it['id']}")
+                        if cols[1].button("Move", key=f"m_{it['id']}"):
+                            try:
+                                move_item(it["id"], move_choices[dest_name])
+                                st.success("Moved.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Move failed: {e}")
+                        # Delete
+                        if cols[2].button("Delete", key=f"d_{it['id']}"):
+                            try:
+                                delete_item(it["id"])
+                                st.success("Deleted.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Delete failed: {e}")
+        except Exception as e:
+            st.error(f"Load failed: {e}")
+
