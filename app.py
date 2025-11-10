@@ -436,7 +436,7 @@ with tabs[0]:
         )
 
         audience_label = st.selectbox("Audience", ["University","A-Level","A-Level / IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
-        aud_map = {"University":"university","A-Level":"A-Level","A-Level / IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
+        aud_map = {"University":"university","A-Level":"A-Level","IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
         audience = aud_map.get(audience_label,"high school")
         detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
 
