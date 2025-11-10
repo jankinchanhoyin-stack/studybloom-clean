@@ -1,14 +1,13 @@
 import streamlit as st
-import sys  # optional for version caption
+import sys  # optional, for a quick version display
 
-# >>> MUST be first Streamlit call <<<
+# MUST be the first Streamlit command:
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
-# (Optional: debug Python version so we can see it on the page)
+# optional: shows the Python version at runtime so we can debug cloud envs
 st.caption(f"Python: {sys.version.split()[0]}")
 
-# now do other imports that may *reference* streamlit,
-# but they must not call st.* at import time
+# rest of imports are fine now
 import time
 import datetime as dt
 import requests
@@ -20,16 +19,6 @@ from auth_rest import (
     save_item, list_items, get_item, move_item, delete_item,
     create_folder, list_folders, delete_folder
 )
-
-
-from auth_rest import (
-    sign_in, sign_up, sign_out,
-    save_item, list_items, get_item, move_item, delete_item,
-    create_folder, list_folders, delete_folder
-)
-
-st.set_page_config(page_title="StudyBloom", page_icon="📚")
-st.caption("Build tag: folders-2025-11-10")
 
 # ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
@@ -431,5 +420,6 @@ with tabs[2]:
                                 st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
+
 
 
