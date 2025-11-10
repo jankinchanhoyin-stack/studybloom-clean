@@ -15,7 +15,7 @@ from auth_rest import (
 
 # ---------- Page config ----------
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
-st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10 full-app v2")
+st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10 auto-select folders")
 
 # ---------- URL helpers ----------
 def _get_params() -> Dict[str, str]:
@@ -265,7 +265,6 @@ if "sb_user" not in st.session_state:
         except Exception as e: st.sidebar.error(str(e))
 else:
     st.sidebar.success(f"Signed in as {st.session_state['sb_user']['user'].get('email','account')}")
-    # Subjects (root) in sidebar, plus creator
     if st.sidebar.button("Sign out", use_container_width=True, key="logout_btn"):
         sign_out(); st.rerun()
     st.sidebar.markdown("---")
@@ -332,7 +331,7 @@ def compute_topic_progress(topic_folder_id: str) -> float:
 # ---------- ROUTES ----------
 params = _get_params()
 
-# Full folder list for main pages (don’t crash UI on error)
+# Safe folder load
 try:
     all_folders = list_folders() if "sb_user" in st.session_state else []
 except Exception as e:
@@ -429,8 +428,11 @@ with tabs[0]:
                 st.warning("Enter a subject name.")
             else:
                 created = create_folder(new_subject.strip(), None)
-                subject_id = created["id"]
-                _set_params(folder=subject_id); st.rerun()
+                # Auto-select newly created subject (no page nav)
+                st.session_state["exam_subject"] = created["name"]
+                st.session_state["exam_exam"] = "(create new)"
+                st.session_state["exam_topic"] = "(create new)"
+                st.rerun()
 
         if subject_id:
             exams = [f for f in all_folders if f.get("parent_id")==subject_id]
@@ -446,8 +448,10 @@ with tabs[0]:
                     st.warning("Enter an exam name.")
                 else:
                     created = create_folder(new_exam.strip(), subject_id)
-                    exam_id = created["id"]
-                    _set_params(folder=exam_id); st.rerun()
+                    # Auto-select new exam
+                    st.session_state["exam_exam"] = created["name"]
+                    st.session_state["exam_topic"] = "(create new)"
+                    st.rerun()
 
             if exam_id:
                 topics = [f for f in all_folders if f.get("parent_id")==exam_id]
@@ -463,8 +467,9 @@ with tabs[0]:
                         st.warning("Enter a topic name.")
                     else:
                         created = create_folder(new_topic.strip(), exam_id)
-                        topic_id = created["id"]
-                        _set_params(folder=topic_id); st.rerun()
+                        # Auto-select new topic
+                        st.session_state["exam_topic"] = created["name"]
+                        st.rerun()
 
                 if topic_id:
                     st.markdown("---")
@@ -618,5 +623,3 @@ with tabs[2]:
                     except Exception as e: st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
-
-
