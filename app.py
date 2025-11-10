@@ -20,7 +20,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: reverted-no-async")
+st.caption(f"Python {sys.version.split()[0]} • Build: auto-names + folder rename/delete")
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
@@ -34,7 +34,7 @@ def _set_params(**kwargs):
     except Exception:
         st.experimental_set_query_params(**kwargs)
 
-# ---------------- Supabase rename helpers ----------------
+# ---------------- Supabase helpers (rename folders/items) ----------------
 def _sb_headers():
     url = st.secrets.get("SUPABASE_URL")
     key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
@@ -52,6 +52,20 @@ def rename_folder(folder_id: str, new_name: str) -> dict:
     r = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}", json={"name": new_name}, headers=h, timeout=20)
     r.raise_for_status(); data = r.json()
     return data[0] if isinstance(data, list) and data else {}
+
+def folder_name_by_id(fid: Optional[str]) -> Optional[str]:
+    if not fid: return None
+    try:
+        folders = list_folders()
+        for f in folders:
+            if f.get("id") == fid:
+                return f.get("name")
+    except:  # fall back to current cache
+        pass
+    for f in ALL_FOLDERS:
+        if f.get("id") == fid:
+            return f.get("name")
+    return None
 
 # ---------------- Progress calc ----------------
 def compute_topic_progress(topic_folder_id: str) -> float:
@@ -403,11 +417,20 @@ with tabs[0]:
             exam_id = exam_map.get(st.session_state.get("qs_exam_pick"), exam_id)
             topics = [f for f in list_folders() if exam_id and f.get("parent_id")==exam_id]
             topic_id = None
+            topic_name = None
             if st.session_state.get("qs_new_topic"):
                 for t in topics:
                     if t["name"] == st.session_state["qs_new_topic"]:
-                        topic_id = t["id"]; break
+                        topic_id = t["id"]; topic_name = t["name"]; break
             dest_folder = topic_id or exam_id or subject_id or None
+
+            # Build base title for auto-naming (Topic > Exam > Subject > subject_hint)
+            base_title = (
+                topic_name
+                or (next((e["name"] for e in exams if e["id"]==exam_id), None) if exam_id else None)
+                or (next((s["name"] for s in subjects if s["id"]==subject_id), None) if subject_id else None)
+                or (subject_hint or "Study Pack")
+            )
 
             prog = st.progress(0, text="Starting…")
             try:
@@ -434,22 +457,22 @@ with tabs[0]:
                 )
 
                 prog.progress(85, text="Saving items…")
-                emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-                title = data.get("title") or "Untitled"
+                title_notes = f"📄 {base_title} — Notes"
+                title_flash = f"🧠 {base_title} — Flashcards"
+                title_quiz  = f"🧪 {base_title} — Quiz"
 
-                summary = save_item("summary", f"{emoji['summary']} {title}", data, dest_folder)
+                summary = save_item("summary", title_notes, data, dest_folder)
                 summary_id = summary.get("id")
                 flash_id = quiz_id = None
 
                 if cards:
-                    flash = save_item("flashcards", f"{emoji['flashcards']} {title} • Flashcards",
-                                      {"flashcards": cards}, dest_folder)
+                    flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
                     flash_id = flash.get("id")
 
                 quiz_payload = {"questions": qs}
                 if quiz_mode == "Multiple choice":
                     quiz_payload["type"] = "mcq"
-                quiz_item = save_item("quiz", f"{emoji['quiz']} {title} • Quiz", quiz_payload, dest_folder)
+                quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
                 quiz_id = quiz_item.get("id")
 
                 prog.progress(100, text="Done!")
@@ -472,28 +495,147 @@ with tabs[1]:
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
     else:
+        # always refresh folders for accurate names when renaming
+        try:
+            ALL_FOLDERS = list_folders()
+        except:
+            pass
+
         subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
-        subj_pick = st.selectbox("Subject", ["— select —"]+subj_names, key="res_subj_pick")
+        left, right = st.columns([3,2], vertical_alignment="center")
+        subj_pick = left.selectbox("Subject", ["— select —"]+subj_names, key="res_subj_pick")
         subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
 
+        # Subject rename/delete controls
+        if subj_id:
+            btnc1, btnc2, btnc3 = right.columns([1,1,2])
+            if btnc1.button("Rename", key="rn_subj_btn"):
+                st.session_state["rn_subj_mode"] = True
+            if btnc2.button("Delete", key="del_subj_btn"):
+                st.session_state["del_subj_confirm"] = True
+
+            if st.session_state.get("rn_subj_mode"):
+                newn = st.text_input("New subject name", value=subj_pick, key="rn_subj_name")
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Save", key="rn_subj_save"):
+                    try:
+                        rename_folder(subj_id, (newn or "").strip())
+                        st.session_state.pop("rn_subj_mode", None)
+                        st.success("Subject renamed.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Rename failed: {e}")
+                if rc2.button("Cancel", key="rn_subj_cancel"):
+                    st.session_state.pop("rn_subj_mode", None); st.rerun()
+
+            if st.session_state.get("del_subj_confirm"):
+                st.warning("Delete this subject and all nested exams/topics/items? This cannot be undone.")
+                dc1, dc2 = st.columns(2)
+                if dc1.button("Confirm delete", type="primary", key="del_subj_yes"):
+                    try:
+                        delete_folder(subj_id)
+                        st.session_state.pop("del_subj_confirm", None)
+                        st.success("Subject deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+                if dc2.button("Cancel", key="del_subj_no"):
+                    st.session_state.pop("del_subj_confirm", None); st.rerun()
+
+        # Exams
         exam_id = None
+        exam_names = []
         if subj_id:
             exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj_id]
-            ex_names = [e["name"] for e in exams]
-            ex_pick = st.selectbox("Exam", ["— select —"]+ex_names, key="res_exam_pick")
-            exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in ex_names else None
+            exam_names = [e["name"] for e in exams]
+            ex_left, ex_right = st.columns([3,2], vertical_alignment="center")
+            ex_pick = ex_left.selectbox("Exam", ["— select —"]+exam_names, key="res_exam_pick")
+            exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in exam_names else None
+
+            if exam_id:
+                b1,b2,b3 = ex_right.columns([1,1,2])
+                if b1.button("Rename", key="rn_exam_btn"):
+                    st.session_state["rn_exam_mode"] = True
+                if b2.button("Delete", key="del_exam_btn"):
+                    st.session_state["del_exam_confirm"] = True
+
+                if st.session_state.get("rn_exam_mode"):
+                    newn = st.text_input("New exam name", value=ex_pick, key="rn_exam_name")
+                    rc1, rc2 = st.columns(2)
+                    if rc1.button("Save", key="rn_exam_save"):
+                        try:
+                            rename_folder(exam_id, (newn or "").strip())
+                            st.session_state.pop("rn_exam_mode", None)
+                            st.success("Exam renamed.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Rename failed: {e}")
+                    if rc2.button("Cancel", key="rn_exam_cancel"):
+                        st.session_state.pop("rn_exam_mode", None); st.rerun()
+
+                if st.session_state.get("del_exam_confirm"):
+                    st.warning("Delete this exam and all nested topics/items? This cannot be undone.")
+                    dc1, dc2 = st.columns(2)
+                    if dc1.button("Confirm delete", type="primary", key="del_exam_yes"):
+                        try:
+                            delete_folder(exam_id)
+                            st.session_state.pop("del_exam_confirm", None)
+                            st.success("Exam deleted.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Delete failed: {e}")
+                    if dc2.button("Cancel", key="del_exam_no"):
+                        st.session_state.pop("del_exam_confirm", None); st.rerun()
         else:
             st.caption("Pick a Subject to reveal Exams.")
 
+        # Topics
         topic_id = None
         if exam_id:
             topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
             tp_names = [t["name"] for t in topics]
-            tp_pick = st.selectbox("Topic", ["— select —"]+tp_names, key="res_topic_pick")
+            tp_left, tp_right = st.columns([3,2], vertical_alignment="center")
+            tp_pick = tp_left.selectbox("Topic", ["— select —"]+tp_names, key="res_topic_pick")
             topic_id = next((t["id"] for t in topics if t["name"]==tp_pick), None) if tp_pick in tp_names else None
+
+            if topic_id:
+                b1,b2,b3 = tp_right.columns([1,1,2])
+                if b1.button("Rename", key="rn_topic_btn"):
+                    st.session_state["rn_topic_mode"] = True
+                if b2.button("Delete", key="del_topic_btn"):
+                    st.session_state["del_topic_confirm"] = True
+
+                if st.session_state.get("rn_topic_mode"):
+                    newn = st.text_input("New topic name", value=tp_pick, key="rn_topic_name")
+                    rc1, rc2 = st.columns(2)
+                    if rc1.button("Save", key="rn_topic_save"):
+                        try:
+                            rename_folder(topic_id, (newn or "").strip())
+                            st.session_state.pop("rn_topic_mode", None)
+                            st.success("Topic renamed.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Rename failed: {e}")
+                    if rc2.button("Cancel", key="rn_topic_cancel"):
+                        st.session_state.pop("rn_topic_mode", None); st.rerun()
+
+                if st.session_state.get("del_topic_confirm"):
+                    st.warning("Delete this topic and all items? This cannot be undone.")
+                    dc1, dc2 = st.columns(2)
+                    if dc1.button("Confirm delete", type="primary", key="del_topic_yes"):
+                        try:
+                            delete_folder(topic_id)
+                            st.session_state.pop("del_topic_confirm", None)
+                            st.success("Topic deleted.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Delete failed: {e}")
+                    if dc2.button("Cancel", key="del_topic_no"):
+                        st.session_state.pop("del_topic_confirm", None); st.rerun()
         else:
             st.caption("Pick an Exam to reveal Topics.")
 
+        # Items inside Topic
         if topic_id:
             st.progress(compute_topic_progress(topic_id), text="Topic progress")
 
