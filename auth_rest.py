@@ -25,11 +25,22 @@ def _headers(token: str | None = None):
 # ---------- Auth ----------
 def sign_up(email: str, password: str):
     url, _ = _get_keys()
-    endpoint = f"{url}/auth/v1/signup"
-    r = requests.post(endpoint, headers=_headers(), json={"email": email, "password": password}, timeout=20)
-    r.raise_for_status()
-    return r.json()  # may require email confirmation depending on project settings
+    # Use the Streamlit URL as your default redirect
+    app_url = st.secrets.get("APP_URL") or os.getenv("APP_URL")
+    params = {}
+    if app_url:
+        params["redirect_to"] = app_url  # works with GoTrue v2 REST
 
+    r = requests.post(
+        f"{url}/auth/v1/signup",
+        params=params,
+        headers=_headers(),
+        json={"email": email, "password": password},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()
+    
 def sign_in(email: str, password: str):
     url, _ = _get_keys()
     endpoint = f"{url}/auth/v1/token?grant_type=password"
