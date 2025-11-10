@@ -1,11 +1,10 @@
-# llm.py
-# llm.py
-import os, json, re, math
+import os, json, re
 from typing import List, Dict
 from openai import OpenAI
 
 # ---------- key management ----------
 def _get_api_key():
+    # Prefer Streamlit secrets in the cloud
     try:
         import streamlit as st
         k = st.secrets.get("OPENAI_API_KEY")
@@ -13,6 +12,7 @@ def _get_api_key():
             return k
     except Exception:
         pass
+    # Fallback to .env locally
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -38,17 +38,15 @@ def _parse_json_loose(text: str) -> dict:
             return json.loads(m.group(0))
         except Exception:
             pass
-    # last resort: wrap raw text
     return {"title": "Summary", "tl_dr": text.strip(), "sections": []}
 
 def _chunk_text(text: str, chunk_chars: int = 9000, overlap: int = 500) -> List[str]:
     if len(text) <= chunk_chars:
         return [text]
-    chunks = []
-    i = 0
+    chunks, i = [], 0
     while i < len(text):
         chunks.append(text[i:i+chunk_chars])
-        i += chunk_chars - overlap
+        i += max(1, chunk_chars - overlap)
     return chunks
 
 # ---------- prompts ----------
@@ -66,28 +64,34 @@ SCHEMA_DESCRIPTION = (
     "No prose before or after the JSON."
 )
 
-def _chunk_summary_prompt(chunk: str, audience: str) -> List[Dict]:
+def _chunk_summary_prompt(chunk: str, audience: str, detail: int) -> List[Dict]:
+    # scale output sizes with detail slider
+    q_count = min(8, 3 + detail)          # exam questions
+    fc_count = min(30, 8 + detail * 4)    # flashcards
+    ex_count = min(5, 1 + detail // 2)    # examples
+    pit_count = min(8, 3 + detail)        # pitfalls
+
     sys = (
         "You are a meticulous study-note generator for exam prep. "
-        "Be specific, use precise language, include concrete facts, definitions, and where relevant formulas. "
+        "Be specific, use precise language, include concrete facts, definitions, and formulas if present. "
         "Bullets should be short but information-dense. Avoid fluff."
     )
     user = (
         f"Create rich study notes for a {audience} student from the CONTENT below.\n\n"
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Requirements:\n"
-        "- Sections should reflect the main topics in this chunk.\n"
-        "- Include key_terms for all new vocabulary and concepts.\n"
-        "- Include formulas only if present/relevant; otherwise return an empty array.\n"
-        "- Provide at least one worked example if possible.\n"
-        "- Include 3–5 common_pitfalls (typical misconceptions).\n"
-        "- Include 5 exam_questions with model answers in the exam board's tone (concise, point-based).\n"
-        "- Include 10 flashcards (front: question/term; back: definition/answer).\n\n"
+        f"- Provide ~{ex_count} worked example(s) if possible.\n"
+        f"- Include ~{pit_count} common_pitfalls (typical misconceptions).\n"
+        f"- Include ~{q_count} exam_questions with concise model answers and point-based markscheme_points.\n"
+        f"- Include ~{fc_count} flashcards (front: question/term; back: definition/answer).\n\n"
         f"CONTENT (chunk):\n{chunk}"
     )
     return [{"role":"system","content":sys},{"role":"user","content":user}]
 
-def _merge_prompt(partials_json: List[dict], audience: str) -> List[Dict]:
+def _merge_prompt(partials_json: List[dict], audience: str, detail: int) -> List[Dict]:
+    q_count = min(12, 5 + detail)
+    fc_count = min(40, 12 + detail * 5)
+
     sys = (
         "You are combining multiple partial study-note summaries into a single coherent set. "
         "Merge, deduplicate, and improve specificity. Keep it exam-oriented."
@@ -99,8 +103,8 @@ def _merge_prompt(partials_json: List[dict], audience: str) -> List[Dict]:
         "- Deduplicate overlapping bullets/terms.\n"
         "- Keep the most specific, factual phrasing.\n"
         "- Ensure a logical section order from fundamentals → applications.\n"
-        "- Keep exam_questions concise with clear markscheme_points.\n"
-        "- Keep total flashcards to ~20 best ones.\n\n"
+        f"- Keep exam_questions concise; provide ~{q_count} of the best.\n"
+        f"- Keep flashcards to ~{fc_count} high-quality items.\n\n"
         f"PARTIALS:\n{json.dumps(partials_json)[:120000]}"
     )
     return [{"role":"system","content":sys},{"role":"user","content":user}]
@@ -111,26 +115,24 @@ def ask_gpt(prompt: str) -> str:
     r = client.responses.create(model="gpt-4o-mini", input=prompt)
     return r.output_text
 
-def summarize_text(text: str, audience: str = "university") -> dict:
+def summarize_text(text: str, audience: str = "university", detail: int = 3) -> dict:
     """
     Map-reduce: if long, summarise chunks then merge into a rich final JSON.
-    audience: 'university' or 'high school'
+    audience: 'university' or 'high school'; detail: 1..5
     """
     client = get_client()
     chunks = _chunk_text(text, chunk_chars=9000, overlap=500)
 
-    # 1) summarise each chunk to structured JSON
     partials = []
-    for idx, ch in enumerate(chunks, start=1):
-        msgs = _chunk_summary_prompt(ch, audience)
+    for ch in chunks:
+        msgs = _chunk_summary_prompt(ch, audience, detail)
         r = client.responses.create(model="gpt-4o-mini", input=msgs)
         partial = _parse_json_loose(r.output_text or "")
         partials.append(partial)
 
-    # 2) if only one chunk, return it; else merge
     if len(partials) == 1:
         return partials[0]
 
-    msgs = _merge_prompt(partials, audience)
+    msgs = _merge_prompt(partials, audience, detail)
     r = client.responses.create(model="gpt-4o-mini", input=msgs)
     return _parse_json_loose(r.output_text or "")

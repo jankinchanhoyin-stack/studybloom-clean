@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 from pdf_utils import extract_pdf_text
 from llm import summarize_text
@@ -13,9 +12,7 @@ audience_label = st.selectbox(
     ["University", "A-Level / IB", "GCSE", "HKDSE"],
     index=0,
 )
-# map to simpler prompt term
 audience = "university" if audience_label == "University" else "high school"
-
 detail = st.slider("Detail level (more = longer output)", 1, 5, 3)
 
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
@@ -36,7 +33,11 @@ if uploaded:
     if st.button("Generate Summary"):
         with st.spinner("Summarizing with AI…"):
             try:
+                # Call new signature first
                 data = summarize_text(text, audience=audience, detail=detail)
+            except TypeError:
+                # Fallback if an older llm.py without 'detail' is live
+                data = summarize_text(text, audience=audience)
             except Exception as e:
                 st.error(f"Summarization failed: {e}")
                 st.stop()
@@ -63,7 +64,7 @@ if uploaded:
             st.markdown("## Formulas")
             for f in forms:
                 st.markdown(f"- **{f.get('name','')}**: `{f.get('expression','')}` — {f.get('meaning','')}")
-
+        
         # Worked Examples
         exs = data.get("examples", [])
         if exs:
