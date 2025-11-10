@@ -275,7 +275,7 @@ if "sb_user" not in st.session_state:
         except requests.HTTPError as e: st.sidebar.error(getattr(e.response,"text",str(e)))
         except Exception as e: st.sidebar.error(str(e))
 else:
-    st.sidebar.success(f"Signed in as {st.session_state['sb_user']['email']}")
+    st.sidebar.success(f"Signed in as {st.session_state['sb_user']['user'].get('email', 'account')}")
     if st.sidebar.button("Sign out", use_container_width=True): sign_out(); st.rerun()
 
 # ---------- Folder helpers ----------
