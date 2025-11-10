@@ -163,3 +163,4 @@ def summarize_text(text: str, audience: str = "university", detail: int = 3) -> 
     msgs = _merge_prompt(partials, audience, detail)
     out = _call_model(client, msgs) or ""
     return _parse_json_loose(out)
+
