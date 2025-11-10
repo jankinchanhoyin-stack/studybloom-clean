@@ -7,11 +7,10 @@ from typing import Optional, List, Dict, Tuple
 
 from pdf_utils import extract_any
 from llm import (
-    run_async,
-    summarize_text, summarize_text_fast,   # safe wrapper used
-    generate_quiz_from_notes_async, generate_quiz_from_notes,
+    summarize_text,              # simple sync
+    generate_quiz_from_notes,    # simple sync
     generate_flashcards_from_notes,
-    grade_free_answer_fast,
+    grade_free_answer,           # simple sync
 )
 from auth_rest import (
     sign_in, sign_up, sign_out,
@@ -21,7 +20,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: stable-async-mcq-fixed")
+st.caption(f"Python {sys.version.split()[0]} • Build: reverted-no-async")
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
@@ -156,11 +155,6 @@ def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, 
         st.rerun()
 
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
-    """
-    Supports:
-      - Free-response: {question, model_answer, markscheme_points[]}
-      - MCQ:           {question, options[], correct_index, explanation}
-    """
     st.subheader("🧪 Quiz")
     if not questions: st.caption("No questions found."); return
     st.session_state.setdefault(f"{key_prefix}_i",0)
@@ -201,7 +195,7 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
         colg1, colg2, colg3, colg4 = st.columns(4)
         if colg1.button("Submit", key=f"{key_prefix}_submit"):
             try:
-                result = grade_free_answer_fast(
+                result = grade_free_answer(
                     q.get("question",""), q.get("model_answer",""),
                     q.get("markscheme_points",[]) or [], ans or "", subject_hint or "General"
                 )
@@ -244,7 +238,7 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
             if folder_id:
                 siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
                 if summary and summary.get("data"):
-                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8)
+                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8, mode="free")
                     created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
                     st.success("New quiz created."); _set_params(item=created.get("id"), view="resources"); st.rerun()
                 else: st.info("No summary found in this folder to generate from.")
@@ -401,7 +395,7 @@ with tabs[0]:
                                  type=["pdf","pptx","jpg","jpeg","png","txt"], accept_multiple_files=True, key="qs_files")
 
         if files and st.button("Generate Notes + Flashcards + Quiz", type="primary", key="qs_generate_btn"):
-            # Re-resolve IDs after potential reruns
+            # Resolve destination folder (topic > exam > subject)
             subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
             subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
             exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
@@ -421,7 +415,7 @@ with tabs[0]:
                 text = extract_any(files)
                 if not text.strip():
                     st.error("No text detected in the uploaded files.")
-                    st.stop()  # <<< FIX: no top-level return
+                    st.stop()
 
                 prog.progress(35, text="Summarising with AI…")
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
@@ -429,20 +423,15 @@ with tabs[0]:
                 prog.progress(60, text="Generating flashcards & quiz…")
                 cards = []
                 try:
-                    cards = run_async(generate_flashcards_from_notes(data, audience=audience))
+                    cards = generate_flashcards_from_notes(data, audience=audience)
                 except Exception as e:
                     st.warning(f"Flashcards skipped: {e}")
 
-                if quiz_mode == "Multiple choice":
-                    qs = run_async(generate_quiz_from_notes_async(
-                        data, subject=subject_hint, audience=audience,
-                        num_questions=8, mode="mcq", mcq_options=mcq_options
-                    ))
-                else:
-                    qs = run_async(generate_quiz_from_notes_async(
-                        data, subject=subject_hint, audience=audience,
-                        num_questions=8, mode="free", mcq_options=4
-                    ))
+                qs = generate_quiz_from_notes(
+                    data, subject=subject_hint, audience=audience,
+                    num_questions=8, mode=("mcq" if quiz_mode=="Multiple choice" else "free"),
+                    mcq_options=mcq_options
+                )
 
                 prog.progress(85, text="Saving items…")
                 emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
@@ -476,7 +465,6 @@ with tabs[0]:
                     _set_params(item=quiz_id, view="resources"); st.rerun()
             except Exception as e:
                 st.error(f"Generation failed: {e}")
-                # No top-level return — let the app continue rendering
 
 # ===== Resources =====
 with tabs[1]:
@@ -566,3 +554,4 @@ with tabs[2]:
             if c3.button("🗑", key=f"all_del_{it['id']}", use_container_width=True):
                 try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                 except Exception as e: st.error(f"Delete failed: {e}")
+
