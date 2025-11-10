@@ -13,9 +13,9 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-# ---------- Page config ----------
+# ---------- Page config (must be first Streamlit call) ----------
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
-st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10 auto-select folders")
+st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10 auto-select v2")
 
 # ---------- URL helpers ----------
 def _get_params() -> Dict[str, str]:
@@ -135,7 +135,7 @@ def interactive_flashcards(flashcards: List[dict], item_id: Optional[str] = None
             st.session_state[f"{key_prefix}_idx"]=idx+1
         st.rerun()
 
-# ---- Quiz with free-text grading ----
+# ---- Quiz with free-text grading + save attempts ----
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
     st.subheader("🧪 Quiz")
     if not questions:
@@ -339,7 +339,7 @@ except Exception as e:
     if "sb_user" in st.session_state:
         st.warning(f"Could not load folders: {e}")
 
-# Folder route
+# Folder route (standalone page)
 if "folder" in params and "sb_user" in st.session_state:
     folder_id = params.get("folder")
     if isinstance(folder_id, list): folder_id = folder_id[0]
@@ -380,7 +380,7 @@ if "folder" in params and "sb_user" in st.session_state:
         st.error(f"Load failed: {e}")
     st.stop()
 
-# Item route
+# Item route (standalone page)
 if "item" in params and "sb_user" in st.session_state:
     item_id = params.get("item")
     if isinstance(item_id, list): item_id = item_id[0]
@@ -416,8 +416,20 @@ with tabs[0]:
     else:
         roots, node_map = build_tree(all_folders)
         subjects = roots
+
+        # SUBJECT select with pending preselect
         subj_names = [s["name"] for s in subjects]
-        subj = st.selectbox("Subject", ["(create new)"] + subj_names, key="exam_subject")
+        pending_subject = st.session_state.pop("pending_subject", None)
+        subj_index = 0
+        if pending_subject and pending_subject in subj_names:
+            subj_index = 1 + subj_names.index(pending_subject)
+
+        subj = st.selectbox(
+            "Subject",
+            ["(create new)"] + subj_names,
+            index=subj_index,
+            key="exam_subject",
+        )
         new_subject = st.text_input("New subject", placeholder="e.g., A-Level Mathematics", key="exam_new_subject")
 
         subject_id = None
@@ -428,16 +440,27 @@ with tabs[0]:
                 st.warning("Enter a subject name.")
             else:
                 created = create_folder(new_subject.strip(), None)
-                # Auto-select newly created subject (no page nav)
-                st.session_state["exam_subject"] = created["name"]
+                # Remember created name, preselect next run
+                st.session_state["pending_subject"] = created["name"]
                 st.session_state["exam_exam"] = "(create new)"
                 st.session_state["exam_topic"] = "(create new)"
                 st.rerun()
 
         if subject_id:
+            # EXAM select with pending preselect
             exams = [f for f in all_folders if f.get("parent_id")==subject_id]
             exam_names = [e["name"] for e in exams]
-            ex = st.selectbox("Exam", ["(create new)"] + exam_names, key="exam_exam")
+            pending_exam = st.session_state.pop("pending_exam", None)
+            exam_index = 0
+            if pending_exam and pending_exam in exam_names:
+                exam_index = 1 + exam_names.index(pending_exam)
+
+            ex = st.selectbox(
+                "Exam",
+                ["(create new)"] + exam_names,
+                index=exam_index,
+                key="exam_exam",
+            )
             new_exam = st.text_input("New exam", placeholder="e.g., May 2026", key="exam_new_exam")
 
             exam_id = None
@@ -448,15 +471,25 @@ with tabs[0]:
                     st.warning("Enter an exam name.")
                 else:
                     created = create_folder(new_exam.strip(), subject_id)
-                    # Auto-select new exam
-                    st.session_state["exam_exam"] = created["name"]
+                    st.session_state["pending_exam"] = created["name"]
                     st.session_state["exam_topic"] = "(create new)"
                     st.rerun()
 
             if exam_id:
+                # TOPIC select with pending preselect
                 topics = [f for f in all_folders if f.get("parent_id")==exam_id]
                 topic_names = [t["name"] for t in topics]
-                tp = st.selectbox("Topic", ["(create new)"] + topic_names, key="exam_topic")
+                pending_topic = st.session_state.pop("pending_topic", None)
+                topic_index = 0
+                if pending_topic and pending_topic in topic_names:
+                    topic_index = 1 + topic_names.index(pending_topic)
+
+                tp = st.selectbox(
+                    "Topic",
+                    ["(create new)"] + topic_names,
+                    index=topic_index,
+                    key="exam_topic",
+                )
                 new_topic = st.text_input("New topic", placeholder="e.g., Differentiation", key="exam_new_topic")
 
                 topic_id = None
@@ -467,8 +500,7 @@ with tabs[0]:
                         st.warning("Enter a topic name.")
                     else:
                         created = create_folder(new_topic.strip(), exam_id)
-                        # Auto-select new topic
-                        st.session_state["exam_topic"] = created["name"]
+                        st.session_state["pending_topic"] = created["name"]
                         st.rerun()
 
                 if topic_id:
@@ -623,3 +655,4 @@ with tabs[2]:
                     except Exception as e: st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
+
