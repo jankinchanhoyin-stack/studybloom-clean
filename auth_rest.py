@@ -249,3 +249,64 @@ def delete_item(item_id: str):
     r.raise_for_status()
     return True
 
+# --- ADD these helpers near other REST helpers ---
+
+def list_child_folders(parent_id: Optional[str]):
+    """List folders whose parent_id == parent_id (use None for root)."""
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    params = {"select": "id,name,parent_id,created_at", "order": "created_at.asc"}
+    if parent_id is None:
+        params["parent_id"] = "is.null"
+    else:
+        params["parent_id"] = f"eq.{parent_id}"
+    r = requests.get(f"{url}/rest/v1/folders", headers=_headers(token), params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+# -------- Quiz attempts (persist score/history) ----------
+def save_quiz_attempt(item_id: str, correct: int, total: int, history: list):
+    """
+    Insert a quiz attempt row. Requires a 'quiz_attempts' table in Supabase:
+        create table if not exists quiz_attempts (
+            id uuid primary key default uuid_generate_v4(),
+            user_id uuid not null,
+            item_id uuid not null,
+            correct int not null,
+            total int not null,
+            history jsonb,
+            created_at timestamp with time zone default now()
+        );
+        -- RLS:
+        -- enable row level security on quiz_attempts;
+        -- create policy "own read" on quiz_attempts for select using (auth.uid() = user_id);
+        -- create policy "own insert" on quiz_attempts for insert with check (auth.uid() = user_id);
+    """
+    url, _ = _get_keys()
+    token, user = _require_user()
+    payload = {
+        "user_id": user["id"],
+        "item_id": item_id,
+        "correct": int(correct),
+        "total": int(total),
+        "history": history,
+    }
+    r = requests.post(
+        f"{url}/rest/v1/quiz_attempts",
+        headers={**_headers(token), "Prefer": "return=representation"},
+        json=payload, timeout=20
+    )
+    r.raise_for_status()
+    return r.json()[0]
+
+def list_quiz_attempts(item_id: Optional[str] = None, limit: int = 20):
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    params = {"select": "id,item_id,correct,total,created_at", "order": "created_at.desc", "limit": str(limit)}
+    if item_id:
+        params["item_id"] = f"eq.{item_id}"
+    r = requests.get(f"{url}/rest/v1/quiz_attempts", headers=_headers(token), params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
