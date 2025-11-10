@@ -61,3 +61,4 @@ def list_summaries(limit: int = 20):
 def get_summary(summary_id: str):
     sb = get_client(with_token=True)
     return sb.table("summaries").select("*").eq("id", summary_id).single().execute()
+
