@@ -7,7 +7,7 @@ import random
 import requests
 
 from pdf_utils import extract_pdf_text
-from llm import summarize_text  # updated llm.py below supports subject + LaTeX bias
+from llm import summarize_text
 from auth_rest import (
     sign_in, sign_up, sign_out,
     save_item, list_items, get_item, move_item, delete_item,
@@ -16,27 +16,43 @@ from auth_rest import (
 
 # -------------------- Page config (must be FIRST Streamlit call) --------------------
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
-st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10-interactive")
+st.caption(f"Python: {sys.version.split()[0]} • Build: 2025-11-10-router")
+
+# ============================ URL helpers (router) ============================
+def _get_params() -> dict:
+    """Read query params. Works on Streamlit >=1.28 via st.query_params; falls back otherwise."""
+    try:
+        return dict(st.query_params)
+    except Exception:
+        return st.experimental_get_query_params()
+
+def _set_params(**kwargs):
+    """Set query params."""
+    try:
+        st.query_params.clear()
+        st.query_params.update(kwargs)
+    except Exception:
+        st.experimental_set_query_params(**kwargs)
+
+def _clear_params():
+    _set_params()
 
 # ============================ Viewer helpers ============================
 def render_summary(data: dict):
     st.subheader("📝 Notes")
     st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
 
-    # Sections
     for sec in (data.get("sections") or []):
         st.markdown(f"### {sec.get('heading', 'Section')}")
         for b in sec.get("bullets", []) or []:
             st.markdown(f"- {b}")
 
-    # Key terms
     kts = data.get("key_terms") or []
     if kts:
         st.markdown("## Key Terms")
         for kt in kts:
             st.markdown(f"- **{kt.get('term','')}** — {kt.get('definition','')}")
 
-    # Formulas (prefer LaTeX if provided)
     forms = data.get("formulas") or []
     if forms:
         st.markdown("## Formulas")
@@ -45,9 +61,10 @@ def render_summary(data: dict):
             expr = (f.get("latex") or f.get("expression") or "").strip()
             meaning = f.get("meaning","")
             if expr:
-                # If expression looks like LaTeX, render with st.latex, else as code
+                # Render LaTeX when expression appears TeX-ish
                 if any(s in expr for s in ["\\frac", "\\sqrt", "^", "_", "\\times", "\\cdot", "\\sum", "\\int", "\\left", "\\right"]):
-                    st.markdown(f"**{name}** — {meaning}")
+                    if name or meaning:
+                        st.markdown(f"**{name}** — {meaning}")
                     try:
                         st.latex(expr)
                     except Exception:
@@ -57,14 +74,12 @@ def render_summary(data: dict):
             else:
                 st.markdown(f"- **{name}** — {meaning}")
 
-    # Examples
     exs = data.get("examples") or []
     if exs:
         st.markdown("## Worked Examples")
         for e in exs:
             st.markdown(f"- {e}")
 
-    # Pitfalls
     pits = data.get("common_pitfalls") or []
     if pits:
         st.markdown("## Common Pitfalls")
@@ -77,7 +92,6 @@ def interactive_flashcards(flashcards, key_prefix="fc"):
         st.caption("No flashcards found.")
         return
 
-    # State
     st.session_state.setdefault(f"{key_prefix}_idx", 0)
     st.session_state.setdefault(f"{key_prefix}_revealed", False)
     st.session_state.setdefault(f"{key_prefix}_order", list(range(len(flashcards))))
@@ -98,7 +112,6 @@ def interactive_flashcards(flashcards, key_prefix="fc"):
             st.session_state[f"{key_prefix}_revealed"] = False
             st.rerun()
 
-    # Current card
     card = flashcards[order[idx]]
     st.markdown("#### Front")
     st.info(card.get("front", ""))
@@ -127,11 +140,10 @@ def interactive_quiz(questions, key_prefix="quiz"):
         st.caption("No questions found.")
         return
 
-    # State
     st.session_state.setdefault(f"{key_prefix}_i", 0)
     st.session_state.setdefault(f"{key_prefix}_reveal", False)
     st.session_state.setdefault(f"{key_prefix}_correct", 0)
-    st.session_state.setdefault(f"{key_prefix}_history", [])  # list of dicts per Q
+    st.session_state.setdefault(f"{key_prefix}_history", [])
 
     i = st.session_state[f"{key_prefix}_i"]
     reveal = st.session_state[f"{key_prefix}_reveal"]
@@ -142,30 +154,28 @@ def interactive_quiz(questions, key_prefix="quiz"):
     q = questions[i]
     st.markdown(f"### {q.get('question','')}")
 
-    c1, c2 = st.columns([1, 1])
     if not reveal:
-        if c1.button("👀 Show answer", key=f"{key_prefix}_show"):
+        if st.button("👀 Show answer", key=f"{key_prefix}_show"):
             st.session_state[f"{key_prefix}_reveal"] = True
             st.rerun()
     else:
-        with st.expander("Model answer"):
+        with st.expander("Model answer", expanded=True):
             st.markdown(q.get("model_answer", ""))
             for pt in q.get("markscheme_points", []) or []:
                 st.markdown(f"- {pt}")
 
         cc1, cc2 = st.columns(2)
         if cc1.button("✅ I got it", key=f"{key_prefix}_gotit"):
-            # record
             if len(hist) <= i:
                 hist.append({"correct": True, "qid": i})
             else:
                 hist[i] = {"correct": True, "qid": i}
             st.session_state[f"{key_prefix}_correct"] = correct + 1
             st.session_state[f"{key_prefix}_reveal"] = False
-            # advance
             if i < len(questions) - 1:
                 st.session_state[f"{key_prefix}_i"] = i + 1
-                st.rerun()
+            st.rerun()
+
         if cc2.button("❌ I need practice", key=f"{key_prefix}_wrong"):
             if len(hist) <= i:
                 hist.append({"correct": False, "qid": i})
@@ -174,9 +184,8 @@ def interactive_quiz(questions, key_prefix="quiz"):
             st.session_state[f"{key_prefix}_reveal"] = False
             if i < len(questions) - 1:
                 st.session_state[f"{key_prefix}_i"] = i + 1
-                st.rerun()
+            st.rerun()
 
-    # Navigation/footer
     c3, c4, c5 = st.columns(3)
     c3.metric("Score", f"{correct} / {len(questions)}")
     if c4.button("⏭️ Skip", key=f"{key_prefix}_skip", disabled=(i == len(questions) - 1)):
@@ -190,7 +199,6 @@ def interactive_quiz(questions, key_prefix="quiz"):
         st.session_state[f"{key_prefix}_history"] = []
         st.rerun()
 
-    # Completed?
     if i == len(questions) - 1 and not reveal:
         st.markdown("---")
         st.markdown("### Review")
@@ -256,6 +264,40 @@ def id_to_name(fid, folders):
             return f["name"]
     return None
 
+# ============================ ROUTE: Item full-page view ============================
+params = _get_params()
+if "item" in params:
+    # Dedicated item page (no tabs/expanders)
+    item_id = params.get("item")
+    if isinstance(item_id, list):
+        item_id = item_id[0]
+    try:
+        full = get_item(item_id)
+        kind = full.get("kind")
+        title = full.get("title") or kind.title()
+        st.title(title)
+
+        if st.button("← Back", key="back_btn"):
+            _clear_params()
+            st.rerun()
+
+        data = full.get("data") or {}
+        if kind == "summary":
+            render_summary(data or full)
+        elif kind == "flashcards":
+            interactive_flashcards((data.get("flashcards") or []), key_prefix=f"fc_{item_id}")
+        elif kind == "quiz":
+            interactive_quiz((data.get("questions") or []), key_prefix=f"quiz_{item_id}")
+        else:
+            st.write(data or full)
+    except Exception as e:
+        st.error(f"Could not load item: {e}")
+        if st.button("← Back", key="back_btn_err"):
+            _clear_params()
+            st.rerun()
+    st.stop()
+
+# ============================ Normal app (no item param) ============================
 selected_folder = None
 all_folders = []
 if "sb_user" in st.session_state:
@@ -269,6 +311,7 @@ if "sb_user" in st.session_state:
         def render_tree(nodes, level=0):
             for n in nodes:
                 label = (" " * level) + f"• {n['name']}"
+            # simple click to focus folder
                 if st.sidebar.button(label, key=f"folderbtn_{n['id']}"):
                     st.session_state["active_folder_id"] = n["id"]
                 if n["children"]:
@@ -319,19 +362,18 @@ tabs = st.tabs(["Exam Planner", "Quick Study", "Manage Items"])
 with tabs[0]:
     st.title("🗂️ Exam Planner")
     st.write(
-        "Plan by **Subject → Exam → Topic**. Upload each topic as you revise; we'll summarize, "
+        "Plan by **Subject → Exam → Topic**. Upload each topic; we'll summarize, "
         "build **flashcards**, generate a **quiz**, and file them neatly by topic."
     )
 
     if "sb_user" not in st.session_state:
         st.info("Log in (left) to use Exam Planner.")
     else:
-        # session selections
         st.session_state.setdefault("ep_subject_id", None)
         st.session_state.setdefault("ep_exam_id", None)
         st.session_state.setdefault("ep_topic_id", None)
 
-        # ----- SUBJECT -----
+        # Subject
         subjects = [f for f in all_folders if not f.get("parent_id")]
         subj_names = [s["name"] for s in subjects]
         subj_index = 0
@@ -341,10 +383,8 @@ with tabs[0]:
                 subj_index = subj_names.index(sel)
 
         c1, c2 = st.columns([3, 1])
-        subject_choice = c1.selectbox(
-            "Subject folder", ["(create new)"] + subj_names,
-            index=subj_index + 1 if subj_names else 0, key="ep_subj_choice"
-        )
+        subject_choice = c1.selectbox("Subject folder", ["(create new)"] + subj_names,
+                                      index=subj_index + 1 if subj_names else 0, key="ep_subj_choice")
         new_subject_name = c2.text_input("New", key="ep_new_subject_name", placeholder="e.g., A-Level Mathematics")
         if c2.button("Create Subject"):
             n = (new_subject_name or "").strip()
@@ -368,7 +408,7 @@ with tabs[0]:
         if not subject_id:
             st.stop()
 
-        # ----- EXAM -----
+        # Exam
         exams = [f for f in all_folders if f.get("parent_id") == subject_id]
         exam_names = [e["name"] for e in exams]
         exam_index = 0
@@ -378,10 +418,8 @@ with tabs[0]:
                 exam_index = exam_names.index(sel)
 
         c1, c2 = st.columns([3, 1])
-        exam_choice = c1.selectbox(
-            "Exam folder", ["(create new)"] + exam_names,
-            index=exam_index + 1 if exam_names else 0, key="ep_exam_choice"
-        )
+        exam_choice = c1.selectbox("Exam folder", ["(create new)"] + exam_names,
+                                   index=exam_index + 1 if exam_names else 0, key="ep_exam_choice")
         new_exam_name = c2.text_input("New", key="ep_new_exam_name", placeholder="e.g., May 2026 Session")
         if c2.button("Create Exam"):
             n = (new_exam_name or "").strip()
@@ -404,7 +442,7 @@ with tabs[0]:
         if not exam_id:
             st.stop()
 
-        # ----- TOPIC -----
+        # Topic
         topics = [f for f in all_folders if f.get("parent_id") == exam_id]
         topic_names = [t["name"] for t in topics]
         topic_index = 0
@@ -414,10 +452,8 @@ with tabs[0]:
                 topic_index = topic_names.index(sel)
 
         c1, c2 = st.columns([3, 1])
-        topic_choice = c1.selectbox(
-            "Topic folder", ["(create new)"] + topic_names,
-            index=topic_index + 1 if topic_names else 0, key="ep_topic_choice"
-        )
+        topic_choice = c1.selectbox("Topic folder", ["(create new)"] + topic_names,
+                                    index=topic_index + 1 if topic_names else 0, key="ep_topic_choice")
         new_topic_name = c2.text_input("New", key="ep_new_topic_name", placeholder="e.g., Differentiation")
         if c2.button("Create Topic"):
             n = (new_topic_name or "").strip()
@@ -439,7 +475,6 @@ with tabs[0]:
         if not topic_id:
             st.stop()
 
-        # Subject name string for LLM prompt targeting (Math-only questions, etc.)
         subject_name = id_to_name(st.session_state["ep_subject_id"], all_folders) or "General"
 
         st.markdown("---")
@@ -465,7 +500,6 @@ with tabs[0]:
                 try:
                     data = summarize_text(text, audience=audience, detail=detail, subject=subject_name)
                 except TypeError:
-                    # if your summarize_text signature doesn’t accept subject/detail
                     try:
                         data = summarize_text(text, audience=audience, detail=detail)
                     except TypeError:
@@ -474,43 +508,44 @@ with tabs[0]:
                     st.error(f"Summarization failed: {e}")
                     st.stop()
 
-            # Save three items (summary, flashcards, quiz) under the Topic
+            # Save three items and capture IDs
+            summary_id = flash_id = quiz_id = None
             try:
                 title = data.get("title") or f"{id_to_name(topic_id, all_folders) or 'Topic'} Summary"
-                save_item("summary", title, data, topic_id)
+                created_summary = save_item("summary", title, data, topic_id)
+                summary_id = created_summary.get("id")
 
                 fcs = data.get("flashcards") or []
                 if fcs:
-                    save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, topic_id)
+                    created_flash = save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, topic_id)
+                    flash_id = created_flash.get("id")
 
                 qs = data.get("exam_questions") or []
                 if qs:
-                    save_item("quiz", f"{title} • Quiz", {"questions": qs}, topic_id)
+                    created_quiz = save_item("quiz", f"{title} • Quiz", {"questions": qs}, topic_id)
+                    quiz_id = created_quiz.get("id")
 
                 st.success("Saved: summary, flashcards, and quiz to this Topic folder ✅")
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
-            # ---- AUTO-OPEN: Notes first, then interactive sections ----
-            st.markdown("### Generated Content")
-            section = st.radio(
-                "View",
-                ["📝 Notes", "🧠 Flashcards", "🧪 Quiz"],
-                index=0,  # auto-open Notes
-                horizontal=True,
-                key="post_gen_view_ep"
-            )
-            if section == "📝 Notes":
-                render_summary(data)
-            elif section == "🧠 Flashcards":
-                interactive_flashcards(data.get("flashcards") or [], key_prefix="fc_ep")
-            else:
-                interactive_quiz(data.get("exam_questions") or [], key_prefix="quiz_ep")
+            # Open buttons (full-page)
+            st.markdown("### Open Your Materials")
+            oc1, oc2, oc3 = st.columns(3)
+            if summary_id and oc1.button("Open Notes Page", type="primary"):
+                _set_params(item=summary_id)
+                st.rerun()
+            if flash_id and oc2.button("Open Flashcards Page"):
+                _set_params(item=flash_id)
+                st.rerun()
+            if quiz_id and oc3.button("Open Quiz Page"):
+                _set_params(item=quiz_id)
+                st.rerun()
 
 # ---------- Tab 2: Quick Study ----------
 with tabs[1]:
     st.title("⚡ Quick Study")
-    st.write("Just want to study? Upload anything; we’ll create notes, flashcards, and a quiz, then you can file them in any folder.")
+    st.write("Upload anything; we’ll create notes, flashcards, and a quiz, then you can file them in any folder.")
 
     if "sb_user" not in st.session_state:
         st.info("Log in (left) to save your study materials.")
@@ -551,39 +586,43 @@ with tabs[1]:
                     st.error(f"Summarization failed: {e}")
                     st.stop()
 
+            # Save & capture IDs
+            summary_id = flash_id = quiz_id = None
             try:
                 title = data.get("title") or "Untitled"
-                save_item("summary", title, data, dest_id)
+                created_summary = save_item("summary", title, data, dest_id)
+                summary_id = created_summary.get("id")
+
                 fcs = data.get("flashcards") or []
                 if fcs:
-                    save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, dest_id)
+                    created_flash = save_item("flashcards", f"{title} • Flashcards", {"flashcards": fcs}, dest_id)
+                    flash_id = created_flash.get("id")
+
                 qs = data.get("exam_questions") or []
                 if qs:
-                    save_item("quiz", f"{title} • Quiz", {"questions": qs}, dest_id)
+                    created_quiz = save_item("quiz", f"{title} • Quiz", {"questions": qs}, dest_id)
+                    quiz_id = created_quiz.get("id")
+
                 st.success("Saved: summary, flashcards, and quiz ✅")
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
-            # AUTO-OPEN: Notes first
-            st.markdown("### Generated Content")
-            section = st.radio(
-                "View",
-                ["📝 Notes", "🧠 Flashcards", "🧪 Quiz"],
-                index=0,
-                horizontal=True,
-                key="post_gen_view_qs"
-            )
-            if section == "📝 Notes":
-                render_summary(data)
-            elif section == "🧠 Flashcards":
-                interactive_flashcards(data.get("flashcards") or [], key_prefix="fc_qs")
-            else:
-                interactive_quiz(data.get("exam_questions") or [], key_prefix="quiz_qs")
+            st.markdown("### Open Your Materials")
+            oc1, oc2, oc3 = st.columns(3)
+            if summary_id and oc1.button("Open Notes Page", type="primary"):
+                _set_params(item=summary_id)
+                st.rerun()
+            if flash_id and oc2.button("Open Flashcards Page"):
+                _set_params(item=flash_id)
+                st.rerun()
+            if quiz_id and oc3.button("Open Quiz Page"):
+                _set_params(item=quiz_id)
+                st.rerun()
 
 # ---------- Tab 3: Manage Items ----------
 with tabs[2]:
     st.title("🧰 Manage Items")
-    st.write("View, move, or delete your notes, flashcards, and quizzes.")
+    st.write("Open, move, or delete your notes, flashcards, and quizzes.")
 
     if "sb_user" not in st.session_state:
         st.info("Log in to manage your items.")
@@ -602,28 +641,16 @@ with tabs[2]:
                     move_choices[f"{f['name']}"] = f["id"]
 
                 for it in items:
-                    with st.expander(f"📄 [{it['kind']}] {it['title']} — {it['created_at'][:16].replace('T',' ')}"):
+                    with st.expander(f"📄 [{it['kind']}] {it['title']} — {it['created_at'][:16].replace('T',' ')}", expanded=False):
                         st.write(f"**Type**: {it['kind']}")
                         st.write(f"**Current folder**: {next((f['name'] for f in all_folders if f['id'] == it.get('folder_id')), '—')}")
 
                         cols = st.columns(4)
 
-                        # View
-                        if cols[0].button("👁️ View", key=f"v_{it['id']}"):
-                            try:
-                                full = get_item(it["id"])  # includes 'data'
-                                kind = full.get("kind")
-                                payload = full.get("data") or {}
-                                if kind == "summary":
-                                    render_summary(payload or full)
-                                elif kind == "flashcards":
-                                    interactive_flashcards(payload.get("flashcards") or [], key_prefix=f"fc_{it['id']}")
-                                elif kind == "quiz":
-                                    interactive_quiz(payload.get("questions") or [], key_prefix=f"quiz_{it['id']}")
-                                else:
-                                    st.write(payload or full)
-                            except Exception as e:
-                                st.error(f"View failed: {e}")
+                        # Open (full page)
+                        if cols[0].button("🔎 Open", key=f"open_{it['id']}"):
+                            _set_params(item=it["id"])
+                            st.rerun()
 
                         # Move
                         dest_name = cols[1].selectbox("Move to", list(move_choices.keys()), key=f"mv_{it['id']}")
@@ -645,6 +672,7 @@ with tabs[2]:
                                 st.error(f"Delete failed: {e}")
         except Exception as e:
             st.error(f"Load failed: {e}")
+
 
 
 
