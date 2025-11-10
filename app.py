@@ -1,10 +1,9 @@
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
-# ---- CSS: keep action buttons tidy / one-line ----
+# ---- CSS: compact action buttons, avoid wrapping ----
 st.markdown("""
 <style>
-/* Tighter buttons, no wrapping */
 .stButton > button {
   white-space: nowrap !important;
   padding: .35rem .65rem !important;
@@ -19,7 +18,6 @@ st.markdown("""
 
 import sys, requests
 from typing import Optional, List, Dict, Tuple
-from streamlit_cookies_manager import EncryptedCookieManager
 
 from pdf_utils import extract_any
 from llm import (
@@ -36,7 +34,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items,
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: cookies+ui-fixes")
+st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
@@ -69,20 +67,22 @@ def rename_folder(folder_id: str, new_name: str) -> dict:
     r.raise_for_status(); data = r.json()
     return data[0] if isinstance(data, list) and data else {}
 
-# ---- cookie-based “stay signed in” ----
+# ---- cookie-based “stay signed in” (optional, safe import) ----
 COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
-cookies = EncryptedCookieManager(prefix="studybloom.", password=COOKIE_PASSWORD)
-if not cookies.ready():
-    st.stop()
+cookies = None
+try:
+    from streamlit_cookies_manager import EncryptedCookieManager
+    cookies = EncryptedCookieManager(prefix="studybloom.", password=COOKIE_PASSWORD)
+    if not cookies.ready():
+        st.stop()
+except Exception:
+    cookies = None  # proceed without cookies if not installed
 
 def _fetch_user_from_token(access_token: str) -> Optional[dict]:
     try:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-        h = {
-            "apikey": key,
-            "Authorization": f"Bearer {access_token}",
-        }
+        h = {"apikey": key, "Authorization": f"Bearer {access_token}"}
         r = requests.get(f"{url}/auth/v1/user", headers=h, timeout=15)
         if r.status_code == 200:
             return r.json()
@@ -90,8 +90,8 @@ def _fetch_user_from_token(access_token: str) -> Optional[dict]:
         pass
     return None
 
-# If we have a cookie but no session_state user, try to restore
-if "sb_user" not in st.session_state:
+# Restore session from cookie if present
+if "sb_user" not in st.session_state and cookies:
     tok = cookies.get("sb_access")
     if tok:
         user = _fetch_user_from_token(tok)
@@ -301,8 +301,8 @@ if "sb_user" not in st.session_state:
     remember = st.sidebar.checkbox("Stay signed in", value=True, key="remember_me")
     if st.sidebar.button("Sign in", use_container_width=True, key="login_btn"):
         try:
-            sign_in(email, pwd)  # this sets st.session_state["sb_user"]
-            if remember and "sb_user" in st.session_state:
+            sign_in(email, pwd)  # sets st.session_state["sb_user"]
+            if remember and cookies and "sb_user" in st.session_state:
                 tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
                 if tok:
                     cookies["sb_access"] = tok
@@ -319,12 +319,10 @@ if "sb_user" not in st.session_state:
 else:
     st.sidebar.success(f"Signed in as {st.session_state['sb_user']['user'].get('email','account')}")
     if st.sidebar.button("Sign out", use_container_width=True, key="logout_btn"):
-        # clear cookies too
-        if "sb_access" in cookies:
-            del cookies["sb_access"]
-        if "sb_email" in cookies:
-            del cookies["sb_email"]
-        cookies.save()
+        if cookies:
+            if "sb_access" in cookies: del cookies["sb_access"]
+            if "sb_email" in cookies: del cookies["sb_email"]
+            cookies.save()
         sign_out(); st.rerun()
 
 # ---------------- Load folders ----------------
@@ -352,14 +350,12 @@ if "item" in params and "sb_user" in st.session_state:
             _set_params(view="all"); st.rerun()
 
         data = full.get("data") or {}
-        # Removed subject text box per request
 
         if kind == "summary":
             render_summary(data or full)
         elif kind == "flashcards":
             interactive_flashcards(data.get("flashcards") or [], item_id=item_id, key_prefix=f"fc_{item_id}")
         elif kind == "quiz":
-            # still pass a subject hint internally from cookie/email domain if you like
             interactive_quiz(data.get("questions") or [], item_id=item_id, key_prefix=f"quiz_{item_id}", subject_hint="General")
         else:
             st.write(data or full)
@@ -369,13 +365,13 @@ if "item" in params and "sb_user" in st.session_state:
             _set_params(view="all"); st.rerun()
     st.stop()
 
-# ---------------- Tabs (index respects ?view=all/resources) ----------------
+# ---------------- Tabs ----------------
 view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
 default_idx = 2 if view == "all" else (1 if view == "resources" else 0)
 tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 
 # ===== Quick Study =====
-with tabs[0 if default_idx == 0 else 0]:
+with tabs[0]:
     st.title("⚡ Quick Study")
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
@@ -423,28 +419,21 @@ with tabs[0 if default_idx == 0 else 0]:
         else:
             st.caption("Pick or create a Subject first to reveal Exams.")
 
-        # Topic: ALWAYS create new
+        # Topic: Always new (no save yet)
         st.markdown("### Topic")
-        topic_id = None
-        topic_name = None
+        topic_name_input = ""
         if exam_id:
-            topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
-            topic_names = [t["name"] for t in topics]
-            new_topic = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
-            if st.button("Save topic", key="qs_save_topic_btn"):
-                name = (new_topic or "").strip()
-                if not name: st.warning("Enter a topic name.")
-                elif name.lower() in {n.lower() for n in topic_names}:
-                    st.error("This topic already exists under the exam.")
-                else:
-                    created = create_folder(name, exam_id); topic_id = created["id"]; topic_name = created["name"]; st.success("Topic created."); st.rerun()
+            topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
         else:
             st.caption("Pick or create an Exam first to add a Topic.")
 
         st.markdown("---")
         st.markdown("**Subject (free text, improves accuracy & quality):**")
-        subject_hint = st.text_input("e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
-                                     value="General", key="qs_subject_hint")
+        subject_hint = st.text_input(
+            "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
+            value="General",
+            key="qs_subject_hint"
+        )
 
         audience_label = st.selectbox("Audience", ["University","A-Level","A-Level / IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
         aud_map = {"University":"university","A-Level":"A-Level","A-Level / IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
@@ -460,18 +449,42 @@ with tabs[0 if default_idx == 0 else 0]:
         files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
                                  type=["pdf","pptx","jpg","jpeg","png","txt"], accept_multiple_files=True, key="qs_files")
 
-        if files and st.button("Generate Notes + Flashcards + Quiz", type="primary", key="qs_generate_btn"):
-            # Resolve destination folder
+        # Gate the generate button until all required inputs exist
+        has_subject = bool(subject_id or st.session_state.get("qs_new_subject"))
+        has_exam = bool(exam_id or st.session_state.get("qs_new_exam"))
+        has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
+        has_files = bool(files)
+        has_audience = bool(audience)
+
+        can_generate = (subject_id is not None) and (exam_id is not None) and has_topic_text and has_files and has_audience
+
+        gen_clicked = st.button(
+            "Generate Notes + Flashcards + Quiz",
+            type="primary",
+            key="qs_generate_btn",
+            disabled=not can_generate
+        )
+
+        if gen_clicked and can_generate:
+            # Resolve destination folders freshly
             subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
             subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
             exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
             exam_map = {e["name"]: e["id"] for e in exams}
             exam_id = exam_map.get(st.session_state.get("qs_exam_pick"), exam_id)
-            topics = [f for f in list_folders() if exam_id and f.get("parent_id")==exam_id]
-            if st.session_state.get("qs_new_topic"):
-                for t in topics:
-                    if t["name"] == st.session_state["qs_new_topic"]:
-                        topic_id = t["id"]; topic_name = t["name"]; break
+
+            # Create the topic now (and catch clashes)
+            topic_id = None
+            topic_name = (st.session_state.get("qs_new_topic") or "").strip()
+            if exam_id and topic_name:
+                existing_topics = [f for f in list_folders() if f.get("parent_id")==exam_id]
+                if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
+                    st.error("Topic already exists under this exam. Please choose a different name.")
+                    st.stop()
+                created = create_folder(topic_name, exam_id)
+                topic_id = created["id"]
+                topic_name = created["name"]
+
             dest_folder = topic_id or exam_id or subject_id or None
 
             # Base title (Topic > Exam > Subject > subject_hint)
@@ -550,24 +563,22 @@ with tabs[1]:
         except:
             pass
 
+        # ---- SUBJECT row (inline actions) ----
         subjects = [r for r in ALL_FOLDERS if not r.get("parent_id")]
         subj_names = [s["name"] for s in subjects]
-        csubj, csubj_actions = st.columns([3,2])
-        subj_pick = csubj.selectbox("Subject", ["— select —"]+subj_names, key="res_subj_pick")
+        csubj1, csubj2, csubj3 = st.columns([3, 0.9, 0.9])
+        subj_pick = csubj1.selectbox("Subject", ["— select —"] + subj_names, key="res_subj_pick")
         subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
 
         if subj_id:
-            with csubj_actions:
-                st.markdown("#### ")
-                a1, a2 = st.columns(2)
-                if a1.button("Rename", key="rn_subj_btn"):
-                    st.session_state["rn_subj_mode"] = True
-                if a2.button("Delete", key="del_subj_btn"):
-                    st.session_state["del_subj_confirm"] = True
+            if csubj2.button("Rename", key="rn_subj_btn", use_container_width=True):
+                st.session_state["rn_subj_mode"] = True
+            if csubj3.button("Delete", key="del_subj_btn", use_container_width=True):
+                st.session_state["del_subj_confirm"] = True
 
             if st.session_state.get("rn_subj_mode"):
                 newn = st.text_input("New subject name", value=subj_pick, key="rn_subj_name")
-                rc1, rc2 = st.columns([1,1])
+                rc1, rc2 = st.columns([1, 1])
                 if rc1.button("Save", key="rn_subj_save"):
                     try:
                         rename_folder(subj_id, (newn or "").strip())
@@ -586,30 +597,28 @@ with tabs[1]:
                     try:
                         delete_folder(subj_id)
                         st.session_state.pop("del_subj_confirm", None)
-                        st.success("Subject deleted.")
-                        st.rerun()
+                        st.success("Subject deleted."); st.rerun()
                     except Exception as e:
                         st.error(f"Delete failed: {e}")
                 if dc2.button("Cancel", key="del_subj_no"):
                     st.session_state.pop("del_subj_confirm", None); st.rerun()
+        else:
+            st.caption("Pick a Subject to reveal Exams.")
 
-        # Exams
+        # ---- EXAM row (inline actions) ----
         exam_id = None
         if subj_id:
             exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj_id]
             ex_names = [e["name"] for e in exams]
-            cexam, cexam_actions = st.columns([3,2])
-            ex_pick = cexam.selectbox("Exam", ["— select —"]+ex_names, key="res_exam_pick")
+            cex1, cex2, cex3 = st.columns([3, 0.9, 0.9])
+            ex_pick = cex1.selectbox("Exam", ["— select —"] + ex_names, key="res_exam_pick")
             exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in ex_names else None
 
             if exam_id:
-                with cexam_actions:
-                    st.markdown("#### ")
-                    e1, e2 = st.columns(2)
-                    if e1.button("Rename", key="rn_exam_btn"):
-                        st.session_state["rn_exam_mode"] = True
-                    if e2.button("Delete", key="del_exam_btn"):
-                        st.session_state["del_exam_confirm"] = True
+                if cex2.button("Rename", key="rn_exam_btn", use_container_width=True):
+                    st.session_state["rn_exam_mode"] = True
+                if cex3.button("Delete", key="del_exam_btn", use_container_width=True):
+                    st.session_state["del_exam_confirm"] = True
 
                 if st.session_state.get("rn_exam_mode"):
                     newn = st.text_input("New exam name", value=ex_pick, key="rn_exam_name")
@@ -639,23 +648,20 @@ with tabs[1]:
         else:
             st.caption("Pick a Subject to reveal Exams.")
 
-        # Topics
+        # ---- TOPIC row (inline actions) ----
         topic_id = None
         if exam_id:
             topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
             tp_names = [t["name"] for t in topics]
-            ctopic, ctopic_actions = st.columns([3,2])
-            tp_pick = ctopic.selectbox("Topic", ["— select —"]+tp_names, key="res_topic_pick")
+            ctp1, ctp2, ctp3 = st.columns([3, 0.9, 0.9])
+            tp_pick = ctp1.selectbox("Topic", ["— select —"] + tp_names, key="res_topic_pick")
             topic_id = next((t["id"] for t in topics if t["name"]==tp_pick), None) if tp_pick in tp_names else None
 
             if topic_id:
-                with ctopic_actions:
-                    st.markdown("#### ")
-                    t1, t2 = st.columns(2)
-                    if t1.button("Rename", key="rn_topic_btn"):
-                        st.session_state["rn_topic_mode"] = True
-                    if t2.button("Delete", key="del_topic_btn"):
-                        st.session_state["del_topic_confirm"] = True
+                if ctp2.button("Rename", key="rn_topic_btn", use_container_width=True):
+                    st.session_state["rn_topic_mode"] = True
+                if ctp3.button("Delete", key="del_topic_btn", use_container_width=True):
+                    st.session_state["del_topic_confirm"] = True
 
                 if st.session_state.get("rn_topic_mode"):
                     newn = st.text_input("New topic name", value=tp_pick, key="rn_topic_name")
@@ -685,7 +691,7 @@ with tabs[1]:
         else:
             st.caption("Pick an Exam to reveal Topics.")
 
-        # Items inside Topic (with neat buttons)
+        # Items inside Topic (neat buttons)
         if topic_id:
             st.progress(compute_topic_progress(topic_id), text="Topic progress")
             emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
@@ -751,4 +757,3 @@ with tabs[2]:
                 if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
                     try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                     except Exception as e: st.error(f"Delete failed: {e}")
-
