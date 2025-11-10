@@ -7,7 +7,8 @@ from typing import Optional, List, Dict, Tuple
 
 from pdf_utils import extract_any
 from llm import (
-    summarize_text_fast, summarize_text,  # both available
+    run_async,
+    summarize_text, summarize_text_fast,   # both available; we use summarize_text (safe wrapper)
     generate_quiz_from_notes_async, generate_quiz_from_notes,
     generate_flashcards_from_notes,
     grade_free_answer_fast,
@@ -20,7 +21,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: fast+mcq")
+st.caption(f"Python {sys.version.split()[0]} • Build: stable-async-mcq")
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
@@ -169,7 +170,6 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
     st.session_state.setdefault(f"{key_prefix}_history",[])
     i = st.session_state[f"{key_prefix}_i"]; i = max(0, min(i, len(questions)-1)); st.session_state[f"{key_prefix}_i"]=i
     q = questions[i]
-
     is_mcq = "options" in q and isinstance(q.get("options"), list)
 
     st.progress((i+1)/len(questions), text=f"Question {i+1}/{len(questions)}")
@@ -191,8 +191,7 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                 if len(hist)<=i: hist.append({"score": sc, "max":10})
                 else: hist[i]={"score": sc, "max":10}
                 st.success("Correct! ✅" if correct else "Not quite. ❌")
-                if q.get("explanation"):
-                    st.info(q["explanation"])
+                if q.get("explanation"): st.info(q["explanation"])
         if col2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
             st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
         if col3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
@@ -227,7 +226,6 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
         if colg3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
             st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
 
-    # Totals + save
     total_sc = sum(h.get("score",0) for h in st.session_state[f"{key_prefix}_history"])
     total_mx = sum(h.get("max",0)  for h in st.session_state[f"{key_prefix}_history"])
     st.metric("Total so far", f"{total_sc} / {total_mx or (len(questions)*10)}")
@@ -246,7 +244,6 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
             if folder_id:
                 siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
                 if summary and summary.get("data"):
-                    # Default regenerate as MCQ for variety
                     new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8)
                     created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
                     st.success("New quiz created."); _set_params(item=created.get("id"), view="resources"); st.rerun()
@@ -321,7 +318,6 @@ tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 # ===== Quick Study =====
 with tabs[0]:
     st.title("⚡ Quick Study")
-
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
@@ -395,7 +391,6 @@ with tabs[0]:
         audience = aud_map.get(audience_label,"high school")
         detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
 
-        # NEW: quiz type
         st.markdown("### Quiz type")
         quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode")
         mcq_options = 4
@@ -422,37 +417,32 @@ with tabs[0]:
 
             prog = st.progress(0, text="Starting…")
             try:
-                # Extract
                 prog.progress(10, text="Extracting text…")
                 text = extract_any(files)
-                if not text.strip(): st.error("No text detected."); st.stop()
+                if not text.strip():
+                    st.error("No text detected in the uploaded files."); return
 
-                # Summarize (fast async)
                 prog.progress(35, text="Summarising with AI…")
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
 
-                # Build flashcards & quiz in parallel (async)
                 prog.progress(60, text="Generating flashcards & quiz…")
-                notes_json = data
-                # flashcards
                 cards = []
                 try:
-                    cards = asyncio.run(generate_flashcards_from_notes(notes_json, audience=audience))
-                except: pass
+                    cards = run_async(generate_flashcards_from_notes(data, audience=audience))
+                except Exception as e:
+                    st.warning(f"Flashcards skipped: {e}")
 
-                # quiz
                 if quiz_mode == "Multiple choice":
-                    qs = asyncio.run(generate_quiz_from_notes_async(
-                        notes_json, subject=subject_hint, audience=audience,
+                    qs = run_async(generate_quiz_from_notes_async(
+                        data, subject=subject_hint, audience=audience,
                         num_questions=8, mode="mcq", mcq_options=mcq_options
                     ))
                 else:
-                    qs = asyncio.run(generate_quiz_from_notes_async(
-                        notes_json, subject=subject_hint, audience=audience,
+                    qs = run_async(generate_quiz_from_notes_async(
+                        data, subject=subject_hint, audience=audience,
                         num_questions=8, mode="free", mcq_options=4
                     ))
 
-                # Save everything
                 prog.progress(85, text="Saving items…")
                 emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
                 title = data.get("title") or "Untitled"
@@ -482,9 +472,10 @@ with tabs[0]:
                 if flash_id and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
                     _set_params(item=flash_id, view="resources"); st.rerun()
                 if quiz_id  and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-                    _set_params(item=quiz_id,  view="resources"); st.rerun()
+                    _set_params(item=quiz_id, view="resources"); st.rerun()
             except Exception as e:
                 st.error(f"Generation failed: {e}")
+                return
 
 # ===== Resources =====
 with tabs[1]:
@@ -559,7 +550,7 @@ with tabs[2]:
             c0,c1,c2,c3 = st.columns([8,2,1,1])
             c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
             if c1.button("Open", key=f"all_open_{it['id']}", use_container_width=True):
-                _set_params(item=it["id"], view="resources"); st.rerun()
+                _set_params(item=it['id'], view="resources"); st.rerun()
             if not st.session_state.get(f"edit_item_all_{it['id']}", False):
                 if c2.button("✏", key=f"all_btn_rename_{it['id']}", use_container_width=True):
                     st.session_state[f"edit_item_all_{it['id']}"]=True; st.rerun()
@@ -574,4 +565,3 @@ with tabs[2]:
             if c3.button("🗑", key=f"all_del_{it['id']}", use_container_width=True):
                 try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                 except Exception as e: st.error(f"Delete failed: {e}")
-
