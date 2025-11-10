@@ -21,7 +21,7 @@ def get_client():
     if not key:
         raise RuntimeError("OPENAI_API_KEY not found in Streamlit Secrets or environment.")
     try:
-        from openai import OpenAI  # >=1.x client
+        from openai import OpenAI
         return OpenAI(api_key=key)
     except Exception:
         import openai
@@ -53,6 +53,15 @@ def _chunk_text(text: str, chunk_chars: int = 9000, overlap: int = 500) -> List[
         i += max(1, chunk_chars - overlap)
     return chunks
 
+def _audience_rules(audience: str) -> str:
+    a = (audience or "").lower()
+    if "primary" in a:
+        return ("Use simple words, short steps, and playful contexts (e.g., apples, marbles, playground). "
+                "Keep questions bite-sized; include hints in model answers. Avoid heavy notation unless necessary.")
+    if "a-level" in a or "alevel" in a:
+        return ("Use exam-style phrasing and mark-scheme level precision appropriate to A-Level.")
+    return "Keep tone appropriate for the specified audience."
+
 SCHEMA_DESCRIPTION = (
     "Return ONLY JSON with keys exactly:\n"
     "title (string),\n"
@@ -70,16 +79,11 @@ SCHEMA_DESCRIPTION = (
 def _subject_rules(subject: str) -> str:
     s = (subject or "").lower()
     if "math" in s or "mathemat" in s:
-        return (
-            "For Mathematics: produce calculation/past-paper style questions only; "
-            "avoid essays. Prefer LaTeX in formulas.latex (a^2 -> a^{2}, "
-            "fractions \\frac{a}{b}, roots \\sqrt{}, products \\cdot, vectors \\vec{}). "
-            "Keep model answers concise with mark-scheme points."
-        )
-    return (
-        "Ensure exam_questions match the subject; avoid off-topic questions. "
-        "Be concrete with definitions, processes and key facts."
-    )
+        return ("For Mathematics: use calculation/past-paper style questions; avoid essays. Prefer LaTeX in formulas.latex "
+                "(a^2 -> a^{2}, fractions \\frac{a}{b}, roots \\sqrt{}, products \\cdot, vectors \\vec{}). "
+                "Model answers concise with key mark-scheme points.")
+    return ("Ensure exam_questions match the subject; avoid off-topic questions. "
+            "Be concrete with definitions, processes and key facts.")
 
 def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
     q_count = min(8, 3 + detail)
@@ -94,7 +98,8 @@ def _chunk_summary_prompt(chunk: str, audience: str, detail: int, subject: str):
     )
     user = (
         f"SUBJECT: {subject}\n"
-        f"Create rich study notes for a {audience} student from the CONTENT below.\n\n"
+        f"AUDIENCE: {audience}\n"
+        f"{_audience_rules(audience)}\n"
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Requirements:\n"
         f"- Provide ~{ex_count} worked example(s) if possible.\n"
@@ -114,8 +119,7 @@ def _merge_prompt(partials_json: List[dict], audience: str, detail: int, subject
         "Merge, deduplicate, and improve specificity. Keep it exam-oriented."
     )
     user = (
-        f"SUBJECT: {subject}\n"
-        f"Merge the following partial JSON summaries into one final, comprehensive set for a {audience} student.\n"
+        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n{_audience_rules(audience)}\n"
         f"{SCHEMA_DESCRIPTION}\n\n"
         "Guidelines:\n"
         "- Deduplicate overlapping bullets/terms.\n"
@@ -162,13 +166,10 @@ def summarize_text(text: str, audience: str = "university", detail: int = 3, sub
     out = _call_model(client, msgs) or ""
     return _parse_json_loose(out)
 
-# --------- AI grading for free-text quiz answers ----------
+# ---- AI grading for free-text quiz answers ----
 def grade_free_answer(question: str, model_answer: str, markscheme: List[str], user_answer: str, subject: str = "General") -> Dict[str, Any]:
-    """
-    Returns: {"correct": bool, "score": int, "max_points": int, "feedback": str}
-    """
     client = get_client()
-    max_points = max(5, min(10, len(markscheme) or 5))  # heuristic
+    max_points = max(5, min(10, len(markscheme) or 5))
     sys = (
         "You are a strict but fair examiner. Score the student's answer against the model answer "
         "and mark-scheme points. Accept equivalent phrasing and equivalent maths/units. "
@@ -187,24 +188,20 @@ def grade_free_answer(question: str, model_answer: str, markscheme: List[str], u
         "- If the answer is largely correct but missing minor detail, give partial credit.\n"
         "- Respond ONLY with the JSON."
     )
-    messages = [{"role":"system","content":sys},{"role":"user","content":user}]
+    messages = [{"role": "system", "content": sys}, {"role": "user", "content": user}]
     out = _call_model(client, messages) or ""
     try:
         data = json.loads(out)
         data["max_points"] = int(max_points)
-        data["score"] = int(max(0, min(max_points, data.get("score",0))))
-        data["correct"] = bool(data.get("correct", data["score"] >= max_points*0.7))
-        data["feedback"] = str(data.get("feedback",""))
+        data["score"] = int(max(0, min(max_points, data.get("score", 0))))
+        data["correct"] = bool(data.get("correct", data["score"] >= max_points * 0.7))
+        data["feedback"] = str(data.get("feedback", ""))
         return data
     except Exception:
         return {"correct": False, "score": 0, "max_points": max_points, "feedback": "Could not parse grading response."}
 
-# --------- Generate a NEW quiz from existing notes ----------
+# ---- Generate a new quiz from notes ----
 def generate_quiz_from_notes(notes: dict, subject: str = "General", audience: str = "high school", num_questions: int = 8) -> List[Dict[str, Any]]:
-    """
-    notes: the 'data' of a saved summary (sections, key_terms, formulas, etc.)
-    Returns a list of exam_questions.
-    """
     client = get_client()
     sys = (
         "You generate exam-style questions from provided study notes. "
@@ -212,12 +209,12 @@ def generate_quiz_from_notes(notes: dict, subject: str = "General", audience: st
         "{question, model_answer, markscheme_points}."
     )
     user = (
-        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n"
+        f"SUBJECT: {subject}\nAUDIENCE: {audience}\n{_audience_rules(audience)}\n"
         f"NUM_QUESTIONS: {num_questions}\n"
         f"{_subject_rules(subject)}\n\n"
         f"NOTES_JSON:\n{json.dumps(notes)[:120000]}"
     )
-    messages = [{"role":"system","content":sys},{"role":"user","content":user}]
+    messages = [{"role": "system", "content": sys}, {"role": "user", "content": user}]
     out = _call_model(client, messages) or ""
     try:
         data = json.loads(out)
@@ -228,6 +225,7 @@ def generate_quiz_from_notes(notes: dict, subject: str = "General", audience: st
     except Exception:
         pass
     return []
+
 
 
 
