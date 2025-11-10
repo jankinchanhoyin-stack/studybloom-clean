@@ -352,61 +352,112 @@ with tabs[0]:
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
-        # SUBJECT picker / creator
-        roots, _ = build_tree(ALL_FOLDERS)
-        subjects = roots
-        subj_names = [s["name"] for s in subjects]
-        pending_subject = st.session_state.pop("pending_subject", None)
-        subj_index = 0
-        if pending_subject and pending_subject in subj_names:
-            subj_index = 1 + subj_names.index(pending_subject)
+        # Always refresh folders so new ones appear
+        try:
+            ALL_FOLDERS = list_folders()
+        except Exception:
+            ALL_FOLDERS = []
 
-        subj = st.selectbox(
-            "Subject (used to organise; the text field below improves answer quality)",
-            ["(create new)"] + subj_names,
-            index=subj_index,
-            key="qs_subject_pick",
-        )
-        new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
+        # Build tree to get top-level subjects (folders with no parent)
+        def _roots(rows):
+            return [r for r in rows if not r.get("parent_id")]
+
+        subjects = _roots(ALL_FOLDERS)
+        subj_names = [s["name"] for s in subjects]
+
+        # ---------- SUBJECT PICK / CREATE ----------
+        st.markdown("### Subject")
+        # If we just created one previously, pre-select it
+        pending_subject = st.session_state.pop("pending_subject", None)
+
+        # toggle for create vs existing
+        create_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
 
         subject_id = None
-        if subj != "(create new)" and subj_names:
-            subject_id = next(s["id"] for s in subjects if s["name"] == subj)
-        elif st.button("Create subject", key="qs_create_subject_btn"):
-            name = (new_subject or "").strip()
-            if not name: st.warning("Enter a subject name.")
-            else:
-                created = create_folder(name, None)
-                st.session_state["pending_subject"] = created["name"]
-                st.rerun()
+        if create_new_subject:
+            new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
+            cols = st.columns([1,1,3])
+            if cols[0].button("Save subject", key="qs_save_subject_btn"):
+                name = (new_subject or "").strip()
+                if not name:
+                    st.warning("Enter a subject name.")
+                else:
+                    created = create_folder(name, None)
+                    # remember for next render
+                    st.session_state["pending_subject"] = created["name"]
+                    # switch back to 'use existing' mode so the selectbox appears
+                    st.session_state["qs_make_new_subject"] = False
+                    st.rerun()
+            cols[1].button("Cancel", key="qs_cancel_subject_btn", on_click=lambda: st.session_state.update(qs_make_new_subject=False))
+        else:
+            # compute default index
+            subj_index = 0
+            subject_options = ["— select a subject —"] + subj_names
+            if pending_subject and pending_subject in subj_names:
+                subj_index = 1 + subj_names.index(pending_subject)
 
-        # EXAM picker / creator (depends on subject)
+            subj_pick = st.selectbox(
+                "Use existing subject",
+                subject_options,
+                index=subj_index if subj_names else 0,
+                key="qs_subject_pick",
+            )
+            if subj_pick != "— select a subject —" and subj_pick in subj_names:
+                subject_id = next(s["id"] for s in subjects if s["name"] == subj_pick)
+
+        # ---------- EXAM PICK / CREATE (depends on subject) ----------
+        st.markdown("### Exam")
         exam_id = None
         if subject_id:
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subject_id]
+            exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
             exam_names = [e["name"] for e in exams]
             pending_exam = st.session_state.pop("pending_exam", None)
-            exam_index = 0
-            if pending_exam and pending_exam in exam_names:
-                exam_index = 1 + exam_names.index(pending_exam)
 
-            ex = st.selectbox("Exam", ["(create new)"] + exam_names, index=exam_index, key="qs_exam_pick")
-            new_exam = st.text_input("New exam name", placeholder="e.g., May 2026", key="qs_new_exam")
-            if ex != "(create new)" and exam_names:
-                exam_id = next(e["id"] for e in exams if e["name"]==ex)
-            elif st.button("Create exam", key="qs_create_exam_btn"):
-                name = (new_exam or "").strip()
-                if not name: st.warning("Enter an exam name.")
-                else:
-                    created = create_folder(name, subject_id)
-                    st.session_state["pending_exam"] = created["name"]
-                    st.rerun()
+            create_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
+            if create_new_exam:
+                new_exam = st.text_input("New exam name", placeholder="e.g., May 2026", key="qs_new_exam")
+                cols = st.columns([1,1,3])
+                if cols[0].button("Save exam", key="qs_save_exam_btn"):
+                    name = (new_exam or "").strip()
+                    if not name:
+                        st.warning("Enter an exam name.")
+                    else:
+                        created = create_folder(name, subject_id)
+                        st.session_state["pending_exam"] = created["name"]
+                        st.session_state["qs_make_new_exam"] = False
+                        st.rerun()
+                cols[1].button("Cancel", key="qs_cancel_exam_btn", on_click=lambda: st.session_state.update(qs_make_new_exam=False))
+            else:
+                exam_index = 0
+                exam_options = ["— select an exam —"] + exam_names
+                if pending_exam and pending_exam in exam_names:
+                    exam_index = 1 + exam_names.index(pending_exam)
+
+                ex_pick = st.selectbox(
+                    "Use existing exam",
+                    exam_options,
+                    index=exam_index if exam_names else 0,
+                    key="qs_exam_pick",
+                )
+                if ex_pick != "— select an exam —" and ex_pick in exam_names:
+                    exam_id = next(e["id"] for e in exams if e["name"] == ex_pick)
+        else:
+            st.caption("Pick or create a Subject first to reveal the Exam chooser.")
 
         st.markdown("---")
         st.markdown("**Subject (free text, improves accuracy & quality):**")
-        subject_hint = st.text_input("e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)", value="General", key="qs_subject_hint")
+        subject_hint = st.text_input(
+            "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
+            value="General",
+            key="qs_subject_hint"
+        )
 
-        audience_label = st.selectbox("Audience", ["University", "A-Level", "A-Level / IB", "GCSE", "HKDSE", "Primary"], index=0, key="qs_audience_label")
+        audience_label = st.selectbox(
+            "Audience",
+            ["University", "A-Level", "A-Level / IB", "GCSE", "HKDSE", "Primary"],
+            index=0,
+            key="qs_audience_label"
+        )
         aud_map = {
             "University": "university",
             "A-Level": "A-Level",
@@ -434,17 +485,20 @@ with tabs[0]:
                 text = extract_any(files)
                 if not text.strip():
                     st.error("No text detected."); st.stop()
+
                 progress.progress(35, text="Summarising with AI…")
+                # try various signatures of summarize_text for backwards compat
                 try:
                     data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
                 except TypeError:
                     try: data = summarize_text(text, audience=audience, detail=detail)
                     except TypeError: data = summarize_text(text, audience=audience)
-                # choose destination folder: Exam if present, else Subject, else root (None)
+
                 dest_folder = exam_id or subject_id or None
                 progress.progress(75, text="Saving items…")
                 emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
                 title = data.get("title") or "Untitled"
+
                 summary_id = save_item("summary", f"{emoji['summary']} {title}", data, dest_folder).get("id")
                 flash_id = quiz_id = None
                 if data.get("flashcards"):
@@ -453,6 +507,7 @@ with tabs[0]:
                 if data.get("exam_questions"):
                     quiz_id = save_item("quiz", f"{emoji['quiz']} {title} • Quiz",
                                         {"questions": data["exam_questions"]}, dest_folder).get("id")
+
                 progress.progress(100, text="Done!")
                 st.success("Saved ✅")
 
@@ -466,6 +521,7 @@ with tabs[0]:
                     _set_params(item=quiz_id); st.rerun()
             except Exception as e:
                 st.error(f"Generation failed: {e}")
+
 
 # ========== Study Resources ==========
 with tabs[1]:
