@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Tuple
 from pdf_utils import extract_any
 from llm import (
     run_async,
-    summarize_text, summarize_text_fast,   # both available; we use summarize_text (safe wrapper)
+    summarize_text, summarize_text_fast,   # safe wrapper used
     generate_quiz_from_notes_async, generate_quiz_from_notes,
     generate_flashcards_from_notes,
     grade_free_answer_fast,
@@ -21,7 +21,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: stable-async-mcq")
+st.caption(f"Python {sys.version.split()[0]} • Build: stable-async-mcq-fixed")
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
@@ -420,7 +420,8 @@ with tabs[0]:
                 prog.progress(10, text="Extracting text…")
                 text = extract_any(files)
                 if not text.strip():
-                    st.error("No text detected in the uploaded files."); return
+                    st.error("No text detected in the uploaded files.")
+                    st.stop()  # <<< FIX: no top-level return
 
                 prog.progress(35, text="Summarising with AI…")
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
@@ -475,7 +476,7 @@ with tabs[0]:
                     _set_params(item=quiz_id, view="resources"); st.rerun()
             except Exception as e:
                 st.error(f"Generation failed: {e}")
-                return
+                # No top-level return — let the app continue rendering
 
 # ===== Resources =====
 with tabs[1]:
