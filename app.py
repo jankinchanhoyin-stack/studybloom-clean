@@ -187,6 +187,23 @@ def _topbar():
 _topbar()
 st.divider()
 
+# ---------- Open requested dialog (avoids nested dialogs) ----------
+def _maybe_open_requested_dialog():
+    if st_dialog is None:
+        return
+    want = st.session_state.pop("want_dialog", None)
+    if ("sb_user" not in st.session_state) and want:
+        if want == "login":
+            login_dialog()
+        elif want == "signup":
+            signup_dialog()
+
+_maybe_open_requested_dialog()
+
+if c2.button("Have an account? Sign in", key="dlg_to_login"):
+    st.session_state["want_dialog"] = "login"
+    st.rerun()
+
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
