@@ -37,7 +37,7 @@ from auth_rest import (
     upsert_profile, get_profile, change_password,
 )
 
-st.caption(f"Python {sys.version.split()[0]} • Build: topbar+no-stop")
+st.caption(f"Python {sys.version.split()[0]} • Build: topbar+resources+safe-prof")
 
 # ---------- URL/query helpers ----------
 def _get_params() -> Dict[str, str]:
@@ -76,8 +76,7 @@ cookies = None
 try:
     from streamlit_cookies_manager import EncryptedCookieManager
     cookies = EncryptedCookieManager(prefix="studybloom.", password=COOKIE_PASSWORD)
-    if not cookies.ready():
-        st.stop()
+    # If not ready, just continue without cookies (no st.stop())
 except Exception:
     cookies = None
 
@@ -344,14 +343,20 @@ def topbar():
                 if c3.button("Sign up", key="tb_signup"):
                     _route_set("signup")
             else:
+                # --- Safe profile fetch: always define prof first ---
                 user = (st.session_state.get("sb_user") or {}).get("user") or {}
-                if st.button("Save profile", type="primary"):
+                prof = {}
+                uid = user.get("id")
+                if uid:
                     try:
-                        upsert_profile(uid, name=name, username=username, avatar_url=avatar_url)
-                        st.success("Profile saved.")
-                    except Exception as e:
-                        st.error("Profile table may be missing or blocked by RLS. See notes below.")
+                        gp = get_profile(uid)
+                        if isinstance(gp, dict) and gp:
+                            prof = gp
+                    except Exception:
+                        pass
                 avatar = prof.get("avatar_url") or "https://placehold.co/64x64?text=U"
+
+                # Top-right actions
                 if c3.button("My Account", key="tb_myacct"):
                     _route_set("account")
                 c2.image(avatar, caption="", width=34)
@@ -360,6 +365,11 @@ def topbar():
 # ---------- auth pages ----------
 def page_login():
     st.title("Log in")
+    # show banner if coming from confirm link
+    q = _get_params()
+    if (q.get("confirmed") or [""])[0] in ("true","1","yes"):
+        st.success("Email confirmed! You can log in now.")
+
     email = st.text_input("Email", key="login_email_top")
     pwd   = st.text_input("Password", type="password", key="login_pwd_top")
     remember = st.checkbox("Stay signed in", value=True, key="remember_me_top")
@@ -399,7 +409,15 @@ def page_account():
         st.info("Please log in."); return
     user = st.session_state["sb_user"]["user"]
     uid = user.get("id")
-    prof = get_profile(uid) or {}
+    # Safe profile fetch
+    prof = {}
+    if uid:
+        try:
+            gp = get_profile(uid)
+            if isinstance(gp, dict) and gp:
+                prof = gp
+        except Exception:
+            pass
     name = st.text_input("Display name", value=prof.get("name",""))
     username = st.text_input("Username", value=prof.get("username",""))
     avatar_url = st.text_input("Avatar URL", value=prof.get("avatar_url",""))
@@ -408,7 +426,7 @@ def page_account():
             upsert_profile(uid, name=name, username=username, avatar_url=avatar_url)
             st.success("Profile saved.")
         except Exception as e:
-            st.error(f"Save failed: {e}")
+            st.error("Profile save failed (check profiles table & RLS).")
     st.markdown("---")
     st.subheader("Change password")
     p1 = st.text_input("Current password", type="password")
@@ -422,9 +440,12 @@ def page_account():
     st.markdown("---")
     if st.button("Sign out"):
         if cookies:
-            if "sb_access" in cookies: del cookies["sb_access"]
-            if "sb_email" in cookies: del cookies["sb_email"]
-            cookies.save()
+            try:
+                if "sb_access" in cookies: del cookies["sb_access"]
+                if "sb_email" in cookies: del cookies["sb_email"]
+                cookies.save()
+            except Exception:
+                pass
         sign_out(); _route_set("home"); st.rerun()
 
 # ---------- item page (notes/quiz/flashcards) ----------
@@ -842,3 +863,4 @@ elif route == "account":
     page_account()
 else:
     page_home()
+
