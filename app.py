@@ -7,66 +7,98 @@ st.markdown("<h1 class='title-main'>StudyBloom</h1>", unsafe_allow_html=True)
 st.markdown("""
 <style>
 /* -------- Font -------- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+html, body, [class*="css"] {
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
 
-/* -------- Colour system (light) -------- */
+/* -------- Colour system (light mode) -------- */
 :root{
-  --bg: #ffffff;                  /* page background */
-  --text: #0f172a;                /* slate-900 */
-  --text-dim: #334155;            /* slate-700 */
-  --muted: #64748b;               /* slate-500 */
-  --border: #1e3a8a;              /* blue-800 (dark border) */
-  --border-subtle: #cbd5e1;       /* slate-300 */
-  --primary: #1e3a8a;             /* dark blue buttons */
-  --primary-hover: #172554;       /* darker */
+  --bg: #ffffff;                  /* background */
+  --text: #0f172a;                /* deep slate */
+  --text-dim: #334155;            /* medium slate */
+  --border: #1e3a8a;              /* dark blue */
+  --border-subtle: #cbd5e1;       /* light border */
+  --primary: #1e3a8a;             /* dark blue primary */
+  --primary-hover: #172554;       /* darker hover */
   --surface: #ffffff;             /* white cards/inputs */
 }
 
-/* ---------- Page & container ---------- */
-body { background: var(--bg); color: var(--text); }
-.block-container{
-  /* Back to “classic” content width so inputs look the same as before */
-  max-width: 1100px !important;        /* tune if you want even narrower/wider */
+/* ---------- Page layout ---------- */
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.block-container {
+  max-width: 1100px !important;       /* Maintain classic width */
   padding: 1rem 1.25rem 2rem 1.25rem !important;
   margin: 0 auto !important;
-  /* subtle side borders without huge gutters */
   box-shadow: inset 1px 0 var(--border-subtle), inset -1px 0 var(--border-subtle);
 }
 
-/* Headings */
-h1{ font-size: 2rem; font-weight: 700; margin: .75rem 0 .5rem; color: var(--text); }
-h2{ font-size: 1.5rem; font-weight: 700; margin: .65rem 0 .45rem; }
-h3{ font-size: 1.15rem; font-weight: 600; margin: .5rem 0 .35rem; }
+/* ---------- Headers ---------- */
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: .75rem 0 .5rem;
+  color: var(--text);
+}
+
+h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: .65rem 0 .45rem;
+}
+
+h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: .5rem 0 .35rem;
+}
+
+/* --- Make StudyBloom title larger and bold --- */
+.title-main {
+  font-size: 2.8rem;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: 0.5px;
+  margin-top: 0.5rem;
+  margin-bottom: 1.25rem;
+}
 
 /* Divider */
-hr, .stDivider { border-color: var(--border-subtle) !important; opacity: .9; }
+hr, .stDivider {
+  border-color: var(--border-subtle) !important;
+  opacity: .9;
+}
 
 /* ---------- Inputs / Selects / Textareas ---------- */
 .stTextInput>div>div>input,
 .stTextArea textarea,
-[data-baseweb="input"] input{
+[data-baseweb="input"] input {
   background: var(--surface) !important;
   color: var(--text) !important;
-  border: 1px solid var(--border) !important;      /* dark blue borders */
+  border: 1px solid var(--border) !important;
   border-radius: 10px !important;
 }
-.stSelectbox>div>div{
+
+.stSelectbox>div>div {
   border: 1px solid var(--border) !important;
   border-radius: 10px !important;
   background: var(--surface) !important;
 }
-.stSlider>div{ padding-top:.15rem !important; }
 
-/* Uploader */
-[data-testid="stFileUploadDropzone"]{
+.stSlider>div { padding-top: .15rem !important; }
+
+[data-testid="stFileUploadDropzone"] {
   background: var(--surface) !important;
   border: 1px dashed var(--border) !important;
   border-radius: 12px !important;
 }
 
 /* ---------- Buttons ---------- */
-.stButton>button{
+.stButton>button {
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
@@ -74,53 +106,114 @@ hr, .stDivider { border-color: var(--border-subtle) !important; opacity: .9; }
   padding: .45rem .8rem !important;
   font-weight: 600 !important;
 }
-.stButton>button[kind="primary"]{
+
+.stButton>button[kind="primary"] {
   background: var(--primary) !important;
   color: #ffffff !important;
   border: 1px solid var(--primary) !important;
 }
-.stButton>button:hover{ filter: brightness(.98); }
-.stButton>button[kind="primary"]:hover{ background: var(--primary-hover) !important; }
 
-/* Optional utility tints */
-.btn-danger>button{ background:#ef4444 !important; color:#fff !important; border-color:#ef4444 !important; }
-.btn-warning>button{ background:#f59e0b !important; color:#111 !important; border-color:#f59e0b !important; }
-.btn-success>button{ background:#16a34a !important; color:#fff !important; border-color:#16a34a !important; }
-
-/* ---------- Sidebar: slimmer, emoji on left, text on right ---------- */
-[data-testid="collapsedControl"]{ display:none !important; }  /* keep visible */
-section[data-testid="stSidebar"]{ width: 180px !important; min-width: 180px !important; background:#f8fafc !important; }
-section[data-testid="stSidebar"] .block-container{ padding: 12px 10px 12px; }
-.nav-list{ display:flex; flex-direction:column; gap:8px; }
-.nav-row .stButton>button{
-  width:100% !important; height:42px !important;
-  display:flex !important; align-items:center !important; justify-content:flex-start !important;
-  gap: 10px !important; padding: 6px 10px !important;
-  border-radius: 10px !important; font-size: 15px !important;
-  background:#ffffff !important; color:var(--text) !important; border-color: var(--border) !important;
-}
-.nav-row .stButton>button:hover{ background:#eef2ff !important; } /* soft indigo */
-.nav-row.active .stButton>button{
-  background:#dbeafe !important; border-width:2px !important;     /* active = pale blue block */
+.stButton>button:hover {
+  filter: brightness(.98);
 }
 
-/* ---------- Progress & metric ---------- */
-.stProgress > div > div{ background:#e2e8f0 !important; border-radius:10px !important; }
-.stProgress > div > div > div{ background: var(--primary) !important; }
-[data-testid="stMetricValue"]{ color: var(--primary) !important; font-weight:700; }
-
-/* Code / expander */
-code, pre{ background:#f1f5f9 !important; color:#0f172a !important; border-radius:8px !important; }
-.stExpander, .stAlert, .stDataFrame{
-  background:#ffffff !important; border:1px solid var(--border-subtle) !important; border-radius:12px !important;
+.stButton>button[kind="primary"]:hover {
+  background: var(--primary-hover) !important;
 }
 
-/* Reduce vertical whitespace around standard blocks a bit */
-.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir { margin-top: .25rem !important; margin-bottom: .25rem !important; }
+/* Optional color utilities */
+.btn-danger>button {
+  background:#ef4444 !important;
+  color:#fff !important;
+  border-color:#ef4444 !important;
+}
+
+.btn-warning>button {
+  background:#f59e0b !important;
+  color:#111 !important;
+  border-color:#f59e0b !important;
+}
+
+.btn-success>button {
+  background:#16a34a !important;
+  color:#fff !important;
+  border-color:#16a34a !important;
+}
+
+/* ---------- Sidebar (emoji icons) ---------- */
+[data-testid="collapsedControl"] { display:none !important; }
+section[data-testid="stSidebar"] {
+  width: 180px !important;
+  min-width: 180px !important;
+  background: #f8fafc !important;
+}
+section[data-testid="stSidebar"] .block-container {
+  padding: 12px 10px 12px;
+}
+
+.nav-list {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.nav-row .stButton>button {
+  width:100% !important;
+  height:42px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:flex-start !important;
+  gap:10px !important;
+  padding:6px 10px !important;
+  border-radius:10px !important;
+  font-size:15px !important;
+  background:#ffffff !important;
+  color:var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+.nav-row .stButton>button:hover {
+  background:#eef2ff !important;
+}
+
+.nav-row.active .stButton>button {
+  background:#dbeafe !important;
+  border-width:2px !important;
+}
+
+/* ---------- Progress / Metrics ---------- */
+.stProgress>div>div {
+  background:#e2e8f0 !important;
+  border-radius:10px !important;
+}
+.stProgress>div>div>div {
+  background:var(--primary) !important;
+}
+[data-testid="stMetricValue"] {
+  color:var(--primary) !important;
+  font-weight:700;
+}
+
+/* ---------- Code / Expanders ---------- */
+code, pre {
+  background:#f1f5f9 !important;
+  color:#0f172a !important;
+  border-radius:8px !important;
+}
+
+.stExpander, .stAlert, .stDataFrame {
+  background:#ffffff !important;
+  border:1px solid var(--border-subtle) !important;
+  border-radius:12px !important;
+}
+
+/* ---------- Tighter spacing ---------- */
+.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir {
+  margin-top: .25rem !important;
+  margin-bottom: .25rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
-
-
 
 # ---- CSS: compact action buttons, avoid wrapping ----
 st.markdown("""
