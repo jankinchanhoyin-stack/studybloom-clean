@@ -1006,7 +1006,52 @@ if is_account:
     monthly_ratio = min(1.0, xp_month / max(1, MONTHLY_XP_GOAL))
     
     # --- CSS tweaks ---
+
+    st.markdown("""
+    <style>
+    /* ---- XP Progress Bars ---- */
+    .stProgress > div[data-testid="stProgressBar"] {
+        background-color: rgba(255,255,255,0.08) !important; /* subtle track for dark bg */
+        border-radius: 10px !important;
+    }
+    .stProgress > div[data-testid="stProgressBar"] > div {
+        background-color: #3B82F6 !important; /* clean Tailwind blue-500 fill */
+        border-radius: 10px !important;
+    }
     
+    /* ---- XP Container Styling ---- */
+    .xp-box {
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 10px;
+        padding: .9rem 1rem;
+        background: rgba(255,255,255,0.04); /* gentle contrast on #0E1117 */
+        color: #E5E7EB; /* text-light */
+    }
+    
+    /* ---- General Background ---- */
+    body, .stApp {
+        background-color: #0E1117 !important;
+        color: #E5E7EB !important;
+    }
+    
+    /* ---- Font Improvements ---- */
+    h1, h2, h3, h4, h5, h6, .stMarkdown p {
+        font-family: 'Inter', 'Segoe UI', sans-serif !important;
+        letter-spacing: 0.2px;
+    }
+    
+    /* ---- Metrics (Flashcards / Quiz) ---- */
+    [data-testid="stMetricValue"] {
+        color: #E5E7EB !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #9CA3AF !important;
+        font-weight: 600;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+        
     # --- Layout ---
     with st.container():
         c1, c2 = st.columns([3, 2])
