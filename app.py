@@ -130,7 +130,7 @@ if st_dialog:
         st.write("Welcome back! Please sign in.")
         email = st.text_input("Email", key="dlg_login_email")
         pwd   = st.text_input("Password", type="password", key="dlg_login_pwd")
-        remember = st.checkbox("Stay signed in", value=True, key="dlg_login_remember", disabled=(cookies is None))
+        remember = st.checkbox("Stay signed in", value=True, key="dlg_login_remember")
         c1, c2 = st.columns(2)
         if c1.button("Sign in", type="primary", key="dlg_login_btn"):
             try:
