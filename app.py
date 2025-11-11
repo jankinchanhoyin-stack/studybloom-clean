@@ -360,60 +360,55 @@ else:
 
 # ---------- Top bar ----------
 def _topbar():
-    # Wrap the whole header in a single flex container
-    st.markdown("<div class='header-container'>", unsafe_allow_html=True)
+    # one slim header row: logo on the left, buttons on the far right
+    left, right = st.columns([9, 3])  # push buttons to the right edge
+    with left:
+        st.markdown("<h1 class='title-main' style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
 
-    # Left: brand/title
-    st.markdown("<h1 class='title-main'>StudyBloom</h1>", unsafe_allow_html=True)
+    with right:
+        # a compact row for the two buttons on the far-right
+        b1, b2 = st.columns([1, 1])
+        if "sb_user" not in st.session_state:
+            with b1:
+                if st.button("Log in", key="top_login"):
+                    if st_dialog is not None:
+                        st.session_state["want_dialog"] = "login"
+                        st.rerun()
+                    else:
+                        st.warning("Pop-up dialog not supported here.")
+            with b2:
+                if st.button("Sign up", key="top_signup"):
+                    if st_dialog is not None:
+                        st.session_state["want_dialog"] = "signup"
+                        st.rerun()
+                    else:
+                        st.warning("Pop-up dialog not supported here.")
+        else:
+            # Show: account icon + sign out (compact, side-by-side)
+            with b1:
+                # simple head icon; keep it a button to match the rest of the UI
+                if st.button("👤", key="top_account_icon", help="My account"):
+                    _set_params(view="account")
+                    st.rerun()
 
-    # Right: buttons (account icon + sign out) packed tightly
-    st.markdown("<div class='header-buttons'>", unsafe_allow_html=True)
-
-    if "sb_user" not in st.session_state:
-        # Show Log in / Sign up when logged out (kept compact)
-        st.markdown("<div class='signout'>", unsafe_allow_html=True)
-        c1, c2 = st.columns([1,1])
-        with c1:
-            if st.button("Log in", key="top_login"):
-                if st_dialog is not None:
-                    login_dialog()
-                else:
-                    st.warning("Pop-up dialog not supported here.")
-        with c2:
-            if st.button("Sign up", key="top_signup"):
-                if st_dialog is not None:
-                    signup_dialog()
-                else:
-                    st.warning("Pop-up dialog not supported here.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        # Account icon (👤)
-        st.markdown("<div class='account-icon'>", unsafe_allow_html=True)
-        if st.button("👤", key="top_account_icon"):
-            _set_params(view="account")
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Sign out button
-        st.markdown("<div class='signout'>", unsafe_allow_html=True)
-        if st.button("Sign out", key="top_logout"):
-            # clear cookies if present
-            if cookies:
-                if "sb_access" in cookies: del cookies["sb_access"]
-                if "sb_email" in cookies: del cookies["sb_email"]
-                cookies.save()
-            # clear in-memory session and mark just_logged_out to avoid auto-restore
-            st.session_state.pop("sb_user", None)
-            st.session_state["just_logged_out"] = True
-            try:
-                sign_out()
-            except Exception:
-                pass
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)  # close .header-buttons
-    st.markdown("</div>", unsafe_allow_html=True)  # close .header-container
+            with b2:
+                if st.button("Sign out", key="top_logout"):
+                    # clear cookies if present
+                    try:
+                        if cookies:
+                            if "sb_access" in cookies: del cookies["sb_access"]
+                            if "sb_email" in cookies: del cookies["sb_email"]
+                            cookies.save()
+                    except Exception:
+                        pass
+                    # set a tiny guard so we don't instantly restore from cookie on this rerun
+                    st.session_state["just_logged_out"] = True
+                    try:
+                        sign_out()
+                    except Exception:
+                        pass
+                    st.session_state.pop("sb_user", None)
+                    st.rerun()
 
 _topbar()
 st.divider()
