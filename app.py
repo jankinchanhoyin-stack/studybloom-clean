@@ -1,6 +1,25 @@
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
+import sys, requests
+from typing import Optional, List, Dict, Tuple
+
+from pdf_utils import extract_any
+from llm import (
+    summarize_text,
+    generate_quiz_from_notes,
+    generate_flashcards_from_notes,
+    grade_free_answer,
+)
+from auth_rest import (
+    sign_in, sign_up, sign_out, refresh_user,
+    save_item, list_items, get_item, move_item, delete_item,
+    create_folder, list_folders, delete_folder, list_child_folders,
+    save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
+    save_flash_review, list_flash_reviews_for_items,
+    update_profile, update_password,
+)
+
 # ---------------- Header Bar (top-right auth) ----------------
 def header_bar():
     st.markdown(
@@ -190,24 +209,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-import sys, requests
-from typing import Optional, List, Dict, Tuple
 
-from pdf_utils import extract_any
-from llm import (
-    summarize_text,
-    generate_quiz_from_notes,
-    generate_flashcards_from_notes,
-    grade_free_answer,
-)
-from auth_rest import (
-    sign_in, sign_up, sign_out, refresh_user,
-    save_item, list_items, get_item, move_item, delete_item,
-    create_folder, list_folders, delete_folder, list_child_folders,
-    save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
-    save_flash_review, list_flash_reviews_for_items,
-    update_profile, update_password,
-)
 
 st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
 
