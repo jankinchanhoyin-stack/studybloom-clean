@@ -1095,7 +1095,7 @@ is_account = (params.get("view") == "account") or (
 if is_account:
     # Top row: Back
     back_col, _ = st.columns([1, 9])
-    if bcol.button("← Back", key="acct_back"):
+    if back_col.button("← Back", key="acct_back"):
         _go_home()
 
     st.title("My Account")
