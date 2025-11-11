@@ -99,15 +99,24 @@ def get_profile(user_id: str) -> dict | None:
         return None
     url, key = _base()
     h = _rest_headers(key)
-    r = requests.get(
-        f"{url}/rest/v1/profiles?id=eq.{user_id}",
-        headers=h,
-        timeout=20,
-    )
-    if r.status_code >= 400:
-        raise RuntimeError(f"Get profile failed: {r.text}")
-    arr = r.json() or []
-    return arr[0] if arr else None
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/profiles?id=eq.{user_id}",
+            headers=h,
+            timeout=20,
+        )
+        # If table missing / RLS blocks / not acceptable, just return None and don't crash UI
+        if r.status_code in (401, 403, 404, 406):
+            return None
+        if r.status_code >= 400:
+            # Soft-fail: don't blow up the app
+            return None
+        arr = r.json() or []
+        return arr[0] if arr else None
+    except Exception:
+        # Network or other unknown error -> soft-fail
+        return None
+
 
 def upsert_profile(user_id: str, name: str = "", username: str = "", avatar_url: str = "") -> dict:
     """
