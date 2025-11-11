@@ -778,6 +778,10 @@ with tabs[0]:
         )
 
         if gen_clicked and can_generate:
+            # persist IDs for the next rerun so buttons work
+            st.session_state["qs_created_summary_id"] = summary_id
+            st.session_state["qs_created_flash_id"]   = flash_id
+            st.session_state["qs_created_quiz_id"]    = quiz_id
             # Resolve destination folders freshly
             subjects = _roots(list_folders())
             subj_map = {s["name"]: s["id"] for s in subjects}
@@ -859,14 +863,21 @@ with tabs[0]:
                 prog.progress(100, text="Done!")
                 st.success("Saved ✅")
 
-                st.markdown("### Open")
-                c1, c2, c3 = st.columns(3)
-                if summary_id and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
-                    _set_params(item=summary_id, view="all"); st.rerun()
-                if flash_id and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
-                    _set_params(item=flash_id, view="all"); st.rerun()
-                if quiz_id and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-                    _set_params(item=quiz_id, view="all"); st.rerun()
+                # --- Always show "Open" for last generated items, if present ---
+                sid = st.session_state.get("qs_created_summary_id")
+                fid = st.session_state.get("qs_created_flash_id")
+                qid = st.session_state.get("qs_created_quiz_id")
+                
+                if sid or fid or qid:
+                    st.markdown("### Open")
+                    c1, c2, c3 = st.columns(3)
+                    if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
+                        _set_params(item=sid, view="all"); st.rerun()
+                    if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
+                        _set_params(item=fid, view="all"); st.rerun()
+                    if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
+                        _set_params(item=qid, view="all"); st.rerun()
+
             except Exception as e:
                 st.error(f"Generation failed: {e}")
 
