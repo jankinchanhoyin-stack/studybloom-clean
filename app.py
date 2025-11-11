@@ -2180,17 +2180,37 @@ def render_all_resources_page():
 
 
 # If a view is requested, render that page directly and stop
+# --- Sidebar FIRST ---
+with st.sidebar:
+    st.markdown("<div class='nav-list'>", unsafe_allow_html=True)
+    for label, icon, page in [
+        ("Quick Study", "⚡", "home"),
+        ("Resources", "🧭", "resources"),
+        ("All", "📁", "all"),
+        ("Community", "🌐", "community"),
+        ("My Profile","👤","account")
+    ]:
+        st.markdown("<div class='nav-btn'>", unsafe_allow_html=True)
+        if st.button(f"{icon}  {label}", key=f"nav_{page}"):
+            _set_params(view=page)
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# --- Router (NO st.stop() here) ---
 if view_param == "resources":
-    render_resources_page(); st.stop()
+    render_resources_page()
 elif view_param == "all":
-    render_all_resources_page(); st.stop()
+    render_all_resources_page()
 elif view_param == "community":
     render_community_page()
-    st.stop()
+elif view_param == "account":
+    # account page renders itself / may st.stop() inside
+    pass
+else:
+    # Default page = Quick Study
+    render_quick_study_page()
 
-# ===========================
-# Thin Icon Sidebar + Router
-# ===========================
 
 # ----------------- Slim, uniform rectangular sidebar -----------------
 st.markdown("""
