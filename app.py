@@ -51,6 +51,13 @@ def top_bar():
             if st.button("Sign up", key="btn_signup_open"):
                 st.session_state["auth_modal_mode"] = "signup"
                 st.session_state["auth_modal_open"] = True
+    # Load folders if logged in
+all_folders: list[dict] = []
+if get_current_user():
+    try:
+        all_folders = list_folders()
+    except Exception:
+        all_folders = []
 
 # ---------- Auth modal ----------
 def show_auth_modal(default_mode: str = "login"):
@@ -292,6 +299,9 @@ def build_tree(rows: List[dict]):
         if pid and pid in nodes: nodes[pid]["children"].append(nodes[r["id"]])
         else: roots.append(nodes[r["id"]])
     return roots, nodes
+def roots_only(folders: list[dict]) -> list[dict]:
+    """Return only top-level subject folders (no parent)."""
+    return [f for f in folders if not f.get("parent_id")]
 
 def compute_topic_progress(topic_folder_id: str) -> float:
     """0..1 based on quiz attempts + flashcard recall (40% flash, 60% quiz)."""
@@ -475,7 +485,8 @@ with tabs[0]:
 
         if gen_clicked and can_generate:
             # Resolve destination folders freshly
-            subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
+            subjects = roots_only(all_folders)
+            subj_names = [s["name"] for s in subjects]
             subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
             exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
             exam_map = {e["name"]: e["id"] for e in exams}
