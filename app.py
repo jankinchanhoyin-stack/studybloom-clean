@@ -14,7 +14,6 @@ html, body, [class*="css"] { font-family: 'Inter', system-ui, -apple-system, Seg
 :root{
   --bg:#ffffff;
   --text:#0f172a;
-  --text-dim:#334155;
   --border:#1e3a8a;
   --border-subtle:#e2e8f0;
   --primary:#1e3a8a;
@@ -23,59 +22,105 @@ html, body, [class*="css"] { font-family: 'Inter', system-ui, -apple-system, Seg
 }
 
 /* =========================
-   PAGE LAYOUT + BORDER MARGINS
+   PAGE CONTAINER + BORDERS
    ========================= */
 body{ background:var(--bg); color:var(--text); }
 
 .block-container{
   max-width: 1100px !important;
-  padding: 1rem 1.25rem 2rem 1.25rem !important;
+  padding: 1rem 1.25rem 1.5rem 1.25rem !important;
   margin: 0 auto !important;
-  /* subtle side borders to give page edges back */
   border-left: 1px solid var(--border-subtle);
   border-right: 1px solid var(--border-subtle);
-  /* a touch of rounding so it feels like a page */
   border-radius: 6px;
 }
 
-/* Headings */
-h1{ font-size:2rem; font-weight:700; margin:.75rem 0 .5rem; color:var(--text); }
-h2{ font-size:1.5rem; font-weight:700; margin:.65rem 0 .45rem; }
-h3{ font-size:1.15rem; font-weight:600; margin:.5rem 0 .35rem; }
+/* =========================
+   HEADER (StudyBloom + buttons inline)
+   ========================= */
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: .25rem 0 .5rem 0;       /* thinner top/bottom */
+  margin-bottom: 1rem;
+}
 
-/* Brand Title */
-.title-main{
+.title-main {
   font-size: 2.8rem;
   font-weight: 800;
   color: var(--primary);
-  letter-spacing:.5px;
-  margin-top:.5rem; margin-bottom:1.25rem;
+  margin: 0;                       /* remove excess margin */
 }
 
-/* Divider */
-hr, .stDivider{ border-color: var(--border-subtle) !important; opacity:.9; }
+.header-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* Account icon */
+.header-buttons .account-icon > button{
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 50% !important;
+  background: #e5e7eb !important;
+  border: 1px solid var(--border) !important;
+  color: var(--primary) !important;
+  font-size: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: background .2s ease-in-out;
+}
+.header-buttons .account-icon > button:hover{
+  background:#dbeafe !important;
+}
+
+/* Sign out button */
+.header-buttons .signout > button{
+  font-weight:600 !important;
+  border-radius:10px !important;
+  padding:.4rem .9rem !important;
+  font-size:.9rem !important;
+  border:1px solid #ef4444 !important;
+  color:#b91c1c !important;
+  background:#fff !important;
+}
+.header-buttons .signout > button:hover{
+  background:#fee2e2 !important;
+}
 
 /* =========================
-   COMPACT WIDGET WIDTHS (NARROW)
+   INPUT + SELECT BOX WIDTHS (narrow)
    ========================= */
-/* Target core input wrappers and constrain width */
 .stTextInput>div, .stTextArea>div, .stSelectbox>div, .stMultiSelect>div,
 [data-baseweb="select"], [data-baseweb="input"], [data-baseweb="textarea"],
-[data-testid="stFileUploadDropzone"]
-{
-  max-width: 520px !important;         /* 👈 narrower widgets */
-  width: 520px !important;
-}
-
-/* Make radios, sliders, and checkboxes align to the same narrow width */
-.stRadio, .stSlider, .stCheckbox, .stNumberInput>div{
+[data-testid="stFileUploadDropzone"] {
   max-width: 520px !important;
   width: 520px !important;
 }
 
-/* Keep buttons from stretching across full width if placed alone */
-.stButton{ max-width: 520px !important; }
-.stButton>button{
+.stTextInput>div>div>input,
+.stTextArea textarea,
+[data-baseweb="input"] input {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+
+.stSelectbox>div>div {
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  background: var(--surface) !important;
+}
+
+/* =========================
+   BUTTON BASE STYLES
+   ========================= */
+.stButton>button {
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
@@ -83,105 +128,40 @@ hr, .stDivider{ border-color: var(--border-subtle) !important; opacity:.9; }
   padding: .45rem .8rem !important;
   font-weight: 600 !important;
 }
-.stButton>button[kind="primary"]{
+.stButton>button[kind="primary"] {
   background: var(--primary) !important;
-  color:#fff !important;
-  border-color: var(--primary) !important;
+  color: #fff !important;
 }
-.stButton>button:hover{ filter:brightness(.98); }
-.stButton>button[kind="primary"]:hover{ background: var(--primary-hover) !important; }
-
-/* Inputs look consistent */
-.stTextInput>div>div>input,
-.stTextArea textarea,
-[data-baseweb="input"] input{
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-}
-.stSelectbox>div>div{
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  background: var(--surface) !important;
-}
-[data-testid="stFileUploadDropzone"]{
-  background: var(--surface) !important;
-  border: 1px dashed var(--border) !important;
-  border-radius: 12px !important;
-}
-
-/* Responsive: relax widths a bit on small screens */
-@media (max-width: 740px){
-  .stTextInput>div, .stTextArea>div, .stSelectbox>div, .stMultiSelect>div,
-  [data-baseweb="select"], [data-baseweb="input"], [data-baseweb="textarea"],
-  [data-testid="stFileUploadDropzone"],
-  .stRadio, .stSlider, .stCheckbox, .stNumberInput>div,
-  .stButton
-  { width: 100% !important; max-width: 100% !important; }
-}
+.stButton>button:hover { filter: brightness(.98); }
 
 /* =========================
-   SIDEBAR (simple nav)
+   SIDEBAR NAV
    ========================= */
-[data-testid="collapsedControl"]{ display:none !important; }
-section[data-testid="stSidebar"]{
+[data-testid="collapsedControl"] { display: none !important; }
+section[data-testid="stSidebar"] {
   width: 180px !important;
   min-width: 180px !important;
-  background:#f8fafc !important;
-  border-right:1px solid var(--border-subtle) !important;
-  padding:12px 8px !important;
+  background: #f8fafc !important;
+  border-right: 1px solid var(--border-subtle) !important;
+  padding: 12px 8px !important;
 }
-section[data-testid="stSidebar"] .block-container{ padding:0 !important; width:100% !important; }
-.nav-list{ display:flex; flex-direction:column; align-items:center; gap:10px; }
-.nav-btn .stButton>button{
-  width:95% !important; height:42px !important;
-  display:flex !important; align-items:center !important; justify-content:flex-start !important;
-  gap:10px !important; padding:6px 12px !important;
-  border-radius:10px !important; font-size:15px !important;
-  background:#fff !important; color:#0f172a !important; border:1px solid var(--border) !important;
+.nav-list { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.nav-btn .stButton>button {
+  width: 95% !important;
+  height: 42px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  padding: 6px 12px !important;
+  border-radius: 10px !important;
+  font-size: 15px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  border: 1px solid var(--border) !important;
 }
-.nav-btn .stButton>button:hover{ background:#eef2ff !important; }
-.nav-btn.active .stButton>button{ background:#dbeafe !important; border-width:2px !important; }
-
-/* =========================
-   HEADER: title + account icon + sign out (tight)
-   ========================= */
-.header-container{
-  display:flex; justify-content:space-between; align-items:center;
-  margin-bottom:.75rem; padding:.5rem 0;
-}
-.header-buttons{ display:flex; align-items:center; gap:.4rem; }
-
-/* Account icon */
-.header-buttons .account-icon > button{
-  width:42px !important; height:42px !important; border-radius:50% !important;
-  background:#e5e7eb !important; border:1px solid var(--border) !important;
-  color:var(--primary) !important; font-size:20px !important;
-  display:flex !important; align-items:center !important; justify-content:center !important;
-  transition:background .2s ease-in-out;
-}
-.header-buttons .account-icon > button:hover{ background:#dbeafe !important; }
-
-/* Sign out */
-.header-buttons .signout > button{
-  font-weight:600 !important; border-radius:10px !important;
-  padding:.4rem .85rem !important; font-size:.9rem !important;
-  border:1px solid #ef4444 !important; color:#b91c1c !important; background:#fff !important;
-}
-.header-buttons .signout > button:hover{ background:#fee2e2 !important; }
-
-/* =========================
-   MISC POLISH
-   ========================= */
-.stProgress>div>div{ background:#e2e8f0 !important; border-radius:10px !important; }
-.stProgress>div>div>div{ background:var(--primary) !important; }
-[data-testid="stMetricValue"]{ color:var(--primary) !important; font-weight:700; }
-code, pre{ background:#f1f5f9 !important; color:#0f172a !important; border-radius:8px !important; }
-.stExpander, .stAlert, .stDataFrame{
-  background:#ffffff !important; border:1px solid var(--border-subtle) !important; border-radius:12px !important;
-}
-.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir{ margin-top:.25rem !important; margin-bottom:.25rem !important; }
+.nav-btn .stButton>button:hover { background: #eef2ff !important; }
+.nav-btn.active .stButton>button { background: #dbeafe !important; border-width: 2px !important; }
 </style>
 """, unsafe_allow_html=True)
 
