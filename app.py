@@ -1,6 +1,34 @@
 import sys, importlib.util, os
 import re
 
+def _autosize_counts(text: str, detail: int, quiz_mode: str) -> tuple[int, int]:
+    """Heuristic: size outputs to input length + detail level."""
+    n_words = max(1, len(text.split()))
+    # buckets
+    if n_words < 800:
+        base_fc, base_q = 10, 6
+    elif n_words < 2500:
+        base_fc, base_q = 18, 10
+    elif n_words < 6000:
+        base_fc, base_q = 28, 14
+    else:
+        base_fc, base_q = 40, 20
+
+    # detail influence (1..5) ~ +/- 30%
+    scale = 1.0 + (detail - 3) * 0.15
+    fc = int(round(base_fc * scale))
+    q  = int(round(base_q  * scale))
+
+    # MCQs need a few more to feel meaty
+    if quiz_mode == "Multiple choice":
+        q = int(round(q * 1.15))
+
+    # clamp
+    fc = max(8, min(fc, 60))
+    q  = max(6, min(q, 40))
+    return fc, q
+
+
 def extract_verbatim_definitions(raw_text: str, max_defs: int = 120) -> list[dict]:
     """
     Naive extractor for 'Term: definition' or 'Term - definition' lines.
@@ -2289,32 +2317,6 @@ with st.sidebar:
 # QUICK STUDY (Home)
 # ======================================================
 
-def _autosize_counts(text: str, detail: int, quiz_mode: str) -> tuple[int, int]:
-    """Heuristic: size outputs to input length + detail level."""
-    n_words = max(1, len(text.split()))
-    # buckets
-    if n_words < 800:
-        base_fc, base_q = 10, 6
-    elif n_words < 2500:
-        base_fc, base_q = 18, 10
-    elif n_words < 6000:
-        base_fc, base_q = 28, 14
-    else:
-        base_fc, base_q = 40, 20
-
-    # detail influence (1..5) ~ +/- 30%
-    scale = 1.0 + (detail - 3) * 0.15
-    fc = int(round(base_fc * scale))
-    q  = int(round(base_q  * scale))
-
-    # MCQs need a few more to feel meaty
-    if quiz_mode == "Multiple choice":
-        q = int(round(q * 1.15))
-
-    # clamp
-    fc = max(8, min(fc, 60))
-    q  = max(6, min(q, 40))
-    return fc, q
 
 
 def render_quick_study_page():
