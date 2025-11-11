@@ -2185,18 +2185,6 @@ with st.sidebar:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Router (NO st.stop() here) ---
-if view_param == "resources":
-    render_resources_page()
-elif view_param == "all":
-    render_all_resources_page()
-elif view_param == "community":
-    render_community_page()
-elif view_param == "account":
-    # account page renders itself / may st.stop() inside
-    pass
-else:
-    # Default page = Quick Study
-    render_quick_study_page()
 
 
 # ----------------- Slim, uniform rectangular sidebar -----------------
