@@ -534,18 +534,64 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
             except Exception:
                 st.info("Attempt not saved (check quiz_attempts table).")
     if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
+        # Determine generation settings from current quiz
         try:
-            quiz_item = get_item(item_id); folder_id = quiz_item.get("folder_id"); subject = subject_hint or "General"
-            if folder_id:
-                siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
-                if summary and summary.get("data"):
-                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8, mode="free")
-                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
-                    st.success("New quiz created."); _set_params(item=created.get("id"), view="all"); st.rerun()
-                else: st.info("No summary found in this folder to generate from.")
-            else:     st.info("Folder not found for this quiz.")
+            quiz_item = get_item(item_id)
+            folder_id = quiz_item.get("folder_id")
+            subject = subject_hint or "General"
+    
+            # Try to respect the existing quiz mode/options if present
+            cur_data = (quiz_item.get("data") or {})
+            mode = "mcq" if (cur_data.get("type") == "mcq") else "free"
+            mcq_options = cur_data.get("mcq_options", 4)
+    
+            prog = st.progress(0, text="Finding source summary…")
+    
+            if not folder_id:
+                prog.empty()
+                st.info("Folder not found for this quiz.")
+            else:
+                siblings = list_items(folder_id, limit=200)
+                prog.progress(20, text="Checking sibling items for a summary…")
+                summary = next((s for s in siblings if s.get("kind") == "summary" and s.get("data")), None)
+    
+                if not summary:
+                    prog.empty()
+                    st.info("No summary found in this folder to generate from.")
+                else:
+                    # Generate new questions
+                    prog.progress(55, text="Generating fresh questions with AI…")
+                    try:
+                        new_qs = generate_quiz_from_notes(
+                            summary["data"],
+                            subject=subject,
+                            audience="high school",
+                            num_questions=8,
+                            mode=mode,
+                            mcq_options=mcq_options,
+                        )
+                    except Exception as e:
+                        prog.empty()
+                        st.error(f"Question generation failed: {e}")
+                        st.stop()
+    
+                    # Save the new quiz
+                    prog.progress(85, text="Saving new quiz…")
+                    payload = {"questions": new_qs}
+                    if mode == "mcq":
+                        payload["type"] = "mcq"
+                        payload["mcq_options"] = mcq_options
+    
+                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", payload, folder_id)
+    
+                    prog.progress(100, text="Done!")
+                    st.success("New quiz created.")
+                    _set_params(item=created.get("id"), view="all")
+                    st.rerun()
+    
         except Exception as e:
             st.error(f"Re-generate failed: {e}")
+
 
 # ---------------- Load folders ----------------
 if "sb_user" in st.session_state:
