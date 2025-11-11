@@ -152,5 +152,57 @@ def save_item(folder_id: Optional[str], kind: str, title: str, data: dict) -> Di
         raise RuntimeError(f"Save item failed: {r.status_code} {r.text}")
     return r.json()[0]
 
+import os, requests, streamlit as st
+from typing import Dict, Tuple
+
+def _get_keys() -> Tuple[str, str]:
+    url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        raise RuntimeError("Supabase URL/key missing. Set SUPABASE_URL and SUPABASE_ANON_KEY.")
+    return url, key
+
+def _headers(token: str | None = None) -> Dict[str, str]:
+    _, key = _get_keys()
+    h = {"apikey": key, "Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+def _require_user() -> Tuple[str, Dict]:
+    user = st.session_state.get("sb_user")
+    if not user or not user.get("access_token"):
+        raise RuntimeError("Not signed in.")
+    return user["access_token"], user["user"]
+
+def refresh_user():
+    url, _ = _get_keys()
+    if "sb_user" not in st.session_state:
+        return None
+    tok = st.session_state["sb_user"]["access_token"]
+    r = requests.get(f"{url}/auth/v1/user", headers=_headers(tok), timeout=15)
+    r.raise_for_status()
+    st.session_state["sb_user"]["user"] = r.json()
+    return st.session_state["sb_user"]["user"]
+
+def update_profile(display_name: str | None = None, username: str | None = None):
+    url, _ = _get_keys()
+    tok, _ = _require_user()
+    data = {"data": {}}
+    if display_name is not None:
+        data["data"]["display_name"] = display_name
+    if username is not None:
+        data["data"]["username"] = username
+    r = requests.put(f"{url}/auth/v1/user", headers=_headers(tok), json=data, timeout=20)
+    r.raise_for_status()
+    return refresh_user()
+
+def update_password(new_password: str):
+    url, _ = _get_keys()
+    tok, _ = _require_user()
+    r = requests.put(f"{url}/auth/v1/user", headers=_headers(tok), json={"password": new_password}, timeout=20)
+    r.raise_for_status()
+    return True
+
 
 
