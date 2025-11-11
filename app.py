@@ -198,8 +198,6 @@ def _topbar():
 
 _topbar()
 st.divider()
-_topbar()
-st.divider()
 
 # ---------- Open requested dialog (avoids nested dialogs) ----------
 def _maybe_open_requested_dialog():
