@@ -10,7 +10,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-import sys, requests
+import sys, requests, time, copy
 from typing import Optional, List, Dict, Tuple
 
 from pdf_utils import extract_any
@@ -536,6 +536,8 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
     import time  # put at top of file if you prefer
     
     if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
+        import time, copy
+    
         try:
             quiz_item = get_item(item_id)
             folder_id = quiz_item.get("folder_id")
@@ -543,6 +545,7 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
     
             # Respect current quiz mode/options if present
             cur_data = (quiz_item.get("data") or {})
+            cur_questions = (cur_data.get("questions") or [])
             mode = "mcq" if (cur_data.get("type") == "mcq") else "free"
             mcq_options = cur_data.get("mcq_options", 4)
     
@@ -556,64 +559,92 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                 prog.progress(20, text="Checking sibling items for a summary…")
                 summary = next((s for s in siblings if s.get("kind") == "summary" and s.get("data")), None)
     
-                if not summary:
-                    prog.empty()
-                    st.info("No summary found in this folder to generate from.")
+                # Build notes to guide the model: use summary if present, and
+                # append a "style examples" section built from current questions
+                if summary:
+                    notes = copy.deepcopy(summary["data"])
+                    if not isinstance(notes, dict):
+                        notes = {"sections": [{"heading": "Notes", "bullets": [str(notes)]}]}
                 else:
-                    # Generate new questions (fresh each time)
-                    prog.progress(55, text="Generating fresh questions with AI…")
-                    try:
-                        # Tiny randomness nudge via subject suffix to avoid identical generations
-                        rand_tag = str(int(time.time() * 1000))[-6:]
-                        new_qs = generate_quiz_from_notes(
-                            summary["data"],
-                            subject=f"{subject} [v{rand_tag}]",
-                            audience="high school",
-                            num_questions=8,
-                            mode=mode,
-                            mcq_options=mcq_options,
+                    # No summary? Build pseudo-notes from existing questions so the model has context.
+                    notes = {"sections": [{"heading": "Topic Overview", "bullets": ["Generate a quiz similar in style to the examples below."]}]}
+    
+                # Prepare up to ~10 examples to keep the prompt reasonable
+                example_bullets = []
+                for q in cur_questions[:10]:
+                    if "options" in q and isinstance(q.get("options"), list):
+                        # MCQ style example
+                        opts = q.get("options") or []
+                        correct_i = q.get("correct_index", -1)
+                        example_bullets.append(
+                            f"MCQ Example: {q.get('question','')}\nOptions: {opts}\nCorrect index: {correct_i}\nExplanation: {q.get('explanation','')}"
                         )
-                    except Exception as e:
-                        prog.empty()
-                        st.error(f"Question generation failed: {e}")
-                        st.stop()
-    
-                    # Unique title to avoid upsert collisions
-                    # If your notes were titled "📄 X — Notes", we turn it into "X — Quiz (YYYY-MM-DD HH:MM:SS)"
-                    base_title = summary.get("title", "Study Pack").replace("— Notes", "").replace("📄", "").strip()
-                    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-                    new_quiz_title = f"{base_title} — Quiz ({ts})"
-    
-                    # Save the new quiz
-                    prog.progress(85, text="Saving new quiz…")
-                    payload = {"questions": new_qs}
-                    if mode == "mcq":
-                        payload["type"] = "mcq"
-                        payload["mcq_options"] = mcq_options
-    
-                    created = save_item("quiz", new_quiz_title, payload, folder_id)
-                    new_id = (created or {}).get("id")
-    
-                    # Fallback: if no id returned, open newest quiz in this folder
-                    if not new_id:
-                        try:
-                            latest = [it for it in list_items(folder_id, limit=50) if it.get("kind") == "quiz"]
-                            latest.sort(key=lambda it: it.get("created_at", ""), reverse=True)
-                            new_id = latest[0]["id"] if latest else None
-                        except Exception:
-                            new_id = None
-    
-                    prog.progress(100, text="Done!")
-                    if new_id:
-                        st.success("New quiz created.")
-                        _set_params(item=new_id, view="all")
-                        st.rerun()
                     else:
-                        st.warning("Saved, but couldn’t locate the new quiz automatically. Check All Resources.")
+                        # Free-response style example
+                        example_bullets.append(
+                            f"Free-response Example: {q.get('question','')}\nModel answer: {q.get('model_answer','')}\nMarkscheme points: {q.get('markscheme_points',[]) or []}"
+                        )
+    
+                # Append style examples as an extra section—this nudges the LLM to mimic style
+                sections = notes.get("sections", [])
+                sections.append({
+                    "heading": "Example questions to mimic",
+                    "bullets": example_bullets or ["Keep style consistent with the current quiz."]
+                })
+                notes["sections"] = sections
+    
+                # Generate 30 questions, preserving mode/MCQ options
+                prog.progress(55, text="Generating 30 similar questions with AI…")
+                try:
+                    # Tiny variability tag helps avoid near-duplicates
+                    rand_tag = str(int(time.time() * 1000))[-6:]
+                    new_qs = generate_quiz_from_notes(
+                        notes,
+                        subject=f"{subject} (mimic existing style v{rand_tag})",
+                        audience="high school",
+                        num_questions=30,
+                        mode=mode,
+                        mcq_options=mcq_options,
+                    )
+                except Exception as e:
+                    prog.empty()
+                    st.error(f"Question generation failed: {e}")
+                    st.stop()
+    
+                # Save with a unique title so we never overwrite the current quiz
+                prog.progress(85, text="Saving new 30-question quiz…")
+                base_title = (summary.get("title", "Study Pack") if summary else "Study Pack")
+                base_title = base_title.replace("— Notes", "").replace("📄", "").strip()
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                new_quiz_title = f"{base_title} — Quiz (30) [{ts}]"
+    
+                payload = {"questions": new_qs}
+                if mode == "mcq":
+                    payload["type"] = "mcq"
+                    payload["mcq_options"] = mcq_options
+    
+                created = save_item("quiz", new_quiz_title, payload, folder_id)
+                new_id = (created or {}).get("id")
+    
+                # Fallback: if no id returned, open newest quiz in this folder
+                if not new_id:
+                    try:
+                        latest = [it for it in list_items(folder_id, limit=50) if it.get("kind") == "quiz"]
+                        latest.sort(key=lambda it: it.get("created_at", ""), reverse=True)
+                        new_id = latest[0]["id"] if latest else None
+                    except Exception:
+                        new_id = None
+    
+                prog.progress(100, text="Done!")
+                if new_id:
+                    st.success("New 30-question quiz created.")
+                    _set_params(item=new_id, view="all")
+                    st.rerun()
+                else:
+                    st.warning("Saved, but couldn’t locate the new quiz automatically. Check All Resources.")
     
         except Exception as e:
             st.error(f"Re-generate failed: {e}")
-
     
 
 # ---------------- Load folders ----------------
@@ -900,7 +931,7 @@ with tabs[0]:
                     data,
                     subject=subject_hint,
                     audience=audience,
-                    num_questions=8,
+                    num_questions=30,
                     mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
                     mcq_options=mcq_options,
                 )
