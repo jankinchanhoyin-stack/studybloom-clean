@@ -1058,82 +1058,81 @@ elif view_param == "all":
 # Thin Icon Sidebar + Router
 # ===========================
 
-# --- CSS: lock a skinny sidebar, hide the default hamburger, and style icon buttons
-# Make sure sidebar stays open and set up page meta
-
-# --- Sidebar Styling ---
-# ----------------- Compact, responsive sidebar -----------------
+# ----------------- Rectangular sidebar buttons (icon left, text right) -----------------
 st.markdown("""
 <style>
-/* Hide sidebar collapse chevron */
+/* keep sidebar expanded and hide collapse chevron */
 [data-testid="collapsedControl"] { display: none !important; }
 
-/* Keep default Streamlit width but tidy inner padding */
+/* neater inner padding */
 section[data-testid="stSidebar"] .block-container {
   padding: 12px 10px 16px 10px;
 }
 
-/* Vertical stack */
+/* vertical stack */
 .nav-stack {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 12px;               /* tighter */
-  width: 100%;
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
 }
 
-/* Icon+label block */
-.nav-item { width: 72px; text-align: center; }
-.nav-item .stButton > button {
-  width: 40px !important;  /* smaller icons */
-  height: 40px !important;
-  font-size: 20px !important;
-  border-radius: 10px !important;
-  padding: 0 !important; line-height: 1 !important;
+/* one row wrapper so we can target active state per-row */
+.nav-row { width: 100%; }
+.nav-row .stButton > button {
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  padding: 10px 12px !important;
+  height: 44px !important;
+  border-radius: 12px !important;
+  font-size: 16px !important;   /* label size */
+  line-height: 1 !important;
 }
-.nav-item.active .stButton > button {
+
+/* make the emoji a bit larger to feel like an icon */
+.nav-row .stButton > button span {
+  font-size: 18px !important;
+}
+
+/* active highlight */
+.nav-row.active .stButton > button {
   border: 2px solid #f87171 !important;
-  background-color: rgba(248,113,113,0.08) !important;
-}
-.nav-label {
-  margin-top: 4px;
-  font-size: 0.74rem;      /* smaller label */
-  opacity: .85;
-  white-space: nowrap;
+  background-color: rgba(248,113,113,0.10) !important;
 }
 
-/* Make spacing even tighter on short viewports */
-@media (max-height: 840px) {
-  .nav-stack { gap: 10px; }
-  .nav-item .stButton > button { width: 36px !important; height: 36px !important; font-size: 18px !important; }
-  .nav-item { width: 64px; }
-  .nav-label { font-size: 0.7rem; }
+/* hover hint (subtle) */
+.nav-row .stButton > button:hover {
+  background-color: rgba(255,255,255,0.06) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-def _nav(icon: str, label: str, view: str|None, key: str, active: bool=False):
-    cls = "nav-item active" if active else "nav-item"
-    st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
-    if st.button(icon, key=key):
-        _set_params(view=view); st.rerun()
-    st.markdown(f"<div class='nav-label'>{label}</div></div>", unsafe_allow_html=True)
+def _nav_row(icon: str, label: str, target_view: str|None, key: str, active: bool=False):
+    # Wrap each button so CSS can highlight the active row only
+    st.markdown(f"<div class='nav-row{' active' if active else ''}'>", unsafe_allow_html=True)
+    # Use a normal Streamlit button; label contains emoji + text so it renders icon-left, text-right
+    if st.button(f"{icon}  {label}", key=key):
+        _set_params(view=target_view); st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# Current view
+# current view from URL
 _v = _get_params().get("view")
 view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
+# render the sidebar (always visible on all pages)
 with st.sidebar:
     st.markdown("<div class='nav-stack'>", unsafe_allow_html=True)
-    _nav("🏠", "Home", None,        key="nav_home", active=(view_param==""))
-    _nav("🧭", "Resources", "resources", key="nav_res",  active=(view_param=="resources"))
-    _nav("🗂️", "All",   "all",      key="nav_all",  active=(view_param=="all"))
+    _nav_row("🏠", "Home", None,         key="nav_home", active=(view_param == ""))
+    _nav_row("🧭", "Resources", "resources", key="nav_res",  active=(view_param == "resources"))
+    _nav_row("🗂️", "All",   "all",       key="nav_all",  active=(view_param == "all"))
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Router (unchanged)
+# ------------ Router (unchanged) ------------
 if view_param == "resources":
     render_resources_page(); st.stop()
 elif view_param == "all":
     render_all_resources_page(); st.stop()
-# else: fall through to Quick Study
+# else fall through to Quick Study page...
 
 
 
