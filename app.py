@@ -2180,6 +2180,51 @@ def render_quick_study_page():
         try:
             prog.progress(10, text="Extracting text…")
             text = extract_any(files)
+            # Decide sizes automatically
+            auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
+            
+            # NEW: pull verbatim defs from source text
+            verbatim_defs = extract_verbatim_definitions(text)
+            
+            prog.progress(35, text="Summarising with AI…")
+            # Slightly more detailed: nudge detail up by one (capped at 5)
+            detail_boosted = min(5, (detail or 3) + 1)
+            data = summarize_text(
+                text,
+                audience=audience,
+                detail=detail_boosted,          # ← make notes a bit longer
+                subject=subject_hint,
+                verbatim_definitions=verbatim_defs  # ← ensure exact wording appears in notes
+            )
+            
+            summary_id = flash_id = quiz_id = None
+            
+            if sel_flash:
+                prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
+                try:
+                    cards = generate_flashcards_from_notes(
+                        data,
+                        audience=audience,
+                        target_count=auto_fc,
+                        verbatim_definitions=verbatim_defs  # ← exact wording on definition cards
+                    )
+                except Exception as e:
+                    st.warning(f"Flashcards skipped: {e}")
+                    cards = []
+            
+            if sel_quiz:
+                prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
+                qs = generate_quiz_from_notes(
+                    data,
+                    subject=subject_hint,
+                    audience=audience,
+                    num_questions=auto_qs,
+                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+                    mcq_options=mcq_options,
+                    verbatim_definitions=verbatim_defs  # ← exact wording required for definition Qs
+                )
+            else:
+                qs = None
             if not text.strip():
                 st.error("No text detected in the uploaded files.")
                 st.stop()
