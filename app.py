@@ -718,34 +718,46 @@ def render_resources_page():
         return d
 
     def folder_card(folder: dict, level: str, key_prefix: str, move_targets: list):
-        """Render one folder 'card' with actions."""
-        c1, c2 = st.columns([6.5, 3.5])
-        name = folder.get("name","Untitled")
-        when = (folder.get("created_at","")[:16].replace("T"," "))
+        """Render one folder card with actions (no nested columns-in-columns)."""
+        import datetime as _dt
+    
+        cont = st.container()
+    
+        name = folder.get("name", "Untitled")
+        when = (folder.get("created_at", "")[:16].replace("T", " "))
         cnt = count_items_in_folder(folder["id"])
         badge = f"📄 {cnt['summary']}  🧠 {cnt['flashcards']}  🧪 {cnt['quiz']}"
-
-        # Title + meta
-        c1.markdown(f"**{name}**  <span style='opacity:.6'>— {when}</span><br>"
-                    f"<span style='opacity:.8'>{badge}</span>", unsafe_allow_html=True)
-
-        # Actions row
-        a1, a2, a3, a4 = c2.columns([1.1, 1.1, 1.6, 1.2])
-
-        # Open -> switch to All Resources with filter via query params (open flat list)
-        if a1.button("Open", key=f"{key_prefix}_open_{folder['id']}"):
+    
+        # Row 1: title + meta (two columns, single nesting level)
+        left, right = cont.columns([7.5, 4.5])
+        with left:
+            cont.markdown(
+                f"**{name}**  <span style='opacity:.6'>— {when}</span><br>"
+                f"<span style='opacity:.8'>{badge}</span>",
+                unsafe_allow_html=True,
+            )
+        with right:
+            # put nothing here; actions go in a new row at container level
+    
+            pass
+    
+        # Row 2: actions (create columns at container level, not inside 'right')
+        a1, a2, a3, a4 = cont.columns([1.1, 1.1, 1.8, 1.2])
+    
+        # Open (go to All Resources)
+        if a1.button("Open", key=f"{key_prefix}_open_{folder['id']}", use_container_width=True):
             _set_params(view="all")
             st.rerun()
-
+    
         # Rename inline
         edit_key = f"{key_prefix}_edit_{folder['id']}"
         if not st.session_state.get(edit_key):
-            if a2.button("Rename", key=f"{key_prefix}_rn_btn_{folder['id']}"):
+            if a2.button("Rename", key=f"{key_prefix}_rn_btn_{folder['id']}", use_container_width=True):
                 st.session_state[edit_key] = True
                 st.rerun()
         else:
-            newn = st.text_input("New name", value=name, key=f"{key_prefix}_rn_val_{folder['id']}")
-            s1, s2 = st.columns(2)
+            newn = cont.text_input("New name", value=name, key=f"{key_prefix}_rn_val_{folder['id']}")
+            s1, s2 = cont.columns(2)
             if s1.button("Save", key=f"{key_prefix}_rn_save_{folder['id']}"):
                 try:
                     rename_folder(folder["id"], (newn or "").strip())
@@ -755,13 +767,11 @@ def render_resources_page():
                     st.error(f"Rename failed: {e}")
             if s2.button("Cancel", key=f"{key_prefix}_rn_cancel_{folder['id']}"):
                 st.session_state[edit_key] = False; st.rerun()
-
-        # Move (simulate drag): pick a new parent
-        # Subjects (level="subject") can move to root (None) — so no "Move" for subjects (they're already root).
-        if level in ("exam","topic"):
+    
+        # Move (simulate drag) — only for exams/topics
+        if level in ("exam", "topic"):
             target_map = {f["name"]: f["id"] for f in move_targets}
-            target_names = list(target_map.keys())
-            target_names.sort(key=str.lower)
+            target_names = sorted(target_map.keys(), key=str.lower)
             tgt = a3.selectbox("Move to…", ["—"] + target_names, key=f"{key_prefix}_move_{folder['id']}")
             if tgt != "—":
                 try:
@@ -770,16 +780,16 @@ def render_resources_page():
                 except Exception as e:
                     st.error(f"Move failed: {e}")
         else:
-            a3.write("")  # filler
-
+            a3.write("")  # spacer for subjects
+    
         # Delete with confirm
         del_key = f"{key_prefix}_del_{folder['id']}"
         if not st.session_state.get(del_key):
-            if a4.button("Delete", key=f"{key_prefix}_del_btn_{folder['id']}"):
+            if a4.button("Delete", key=f"{key_prefix}_del_btn_{folder['id']}", use_container_width=True):
                 st.session_state[del_key] = True; st.rerun()
         else:
-            st.warning("Delete this folder and all nested content? This cannot be undone.")
-            d1, d2 = st.columns(2)
+            cont.warning("Delete this folder and all nested content? This cannot be undone.")
+            d1, d2 = cont.columns(2)
             if d1.button("Confirm", type="primary", key=f"{key_prefix}_del_yes_{folder['id']}"):
                 try:
                     delete_folder(folder["id"]); st.success("Deleted."); st.rerun()
@@ -787,8 +797,9 @@ def render_resources_page():
                     st.error(f"Delete failed: {e}")
             if d2.button("Cancel", key=f"{key_prefix}_del_no_{folder['id']}"):
                 st.session_state[del_key] = False; st.rerun()
+    
+        cont.markdown("---")
 
-        st.markdown("---")
 
     # ---------- left controls (create + search) ----------
     toolbar_l, toolbar_r = st.columns([6, 4])
