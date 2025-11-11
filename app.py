@@ -2021,7 +2021,7 @@ def render_resources_page():
 def render_all_resources_page():
     # --------- Header / Back ---------
     top_l, _ = st.columns([1, 9])
-    if top_l.button("← Home", key="all_back_home1"):
+    if top_l.button("← Home", key="all_back_home_btn"):
         _go_home()
 
     st.markdown("## 🗂️ All Resources (Newest)")
