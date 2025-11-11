@@ -1151,7 +1151,7 @@ view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 with st.sidebar:
     st.markdown("<div class='nav-list'>", unsafe_allow_html=True)
     for label, icon, page in [
-        ("    Home    ", "🏠", "home"),
+        ("🏠    Home    ", "", "home"),
         ("Resources", "🧭", "resources"),
         ("All", "📁", "all"),
     ]:
