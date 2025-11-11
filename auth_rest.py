@@ -1,239 +1,156 @@
-# auth_rest.py
-import os
-import requests
-from typing import Optional, Tuple, List, Dict
-import streamlit as st
+# auth_rest.py — streamlined Supabase auth + profile helpers (RLS-safe)
+import os, time, requests
+from typing import Optional, Dict, List, Tuple
 
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+_session = {
+    "access_token": None,
+    "refresh_token": None,
+    "expires_at": 0,
+    "user": None,  # expects {"id":…, "email":…}
+}
+
+# ---------- internal helpers ----------
 def _get_keys() -> Tuple[str, str]:
-    url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_ANON_KEY")
-    if not url or not key:
-        raise RuntimeError("Supabase URL/key missing. Set SUPABASE_URL and SUPABASE_ANON_KEY.")
-    return url, key
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_ANON_KEY")
+    return SUPABASE_URL, SUPABASE_ANON_KEY
 
-def _headers(token: str | None = None) -> Dict[str, str]:
-    url, key = _get_keys()
-    h = {
-        "apikey": key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
+def _now() -> int: return int(time.time())
+
+def _current_access_token() -> Optional[str]:
+    tok, exp = _session.get("access_token"), _session.get("expires_at", 0)
+    if tok and exp and _now() < exp - 30: return tok
+    return tok
 
 def _require_user() -> Tuple[str, Dict]:
-    user = st.session_state.get("sb_user")
-    if not user or not user.get("access_token"):
-        raise RuntimeError("Not signed in.")
-    return user["access_token"], user["user"]
+    tok = _current_access_token()
+    user = _session.get("user")
+    if not tok or not user: raise RuntimeError("Not signed in")
+    return tok, user
 
-# ---------- Auth ----------
-def sign_in(email: str, password: str):
-    url, _ = _get_keys()
-    r = requests.post(
-        f"{url}/auth/v1/token?grant_type=password",
-        json={"email": email, "password": password},
-        headers=_headers(), timeout=20
-    )
-    r.raise_for_status()
-    data = r.json()
-    st.session_state["sb_user"] = {"access_token": data["access_token"], "user": data["user"]}
-    return data
+def _headers(token: Optional[str] = None) -> Dict[str, str]:
+    _, key = _get_keys()
+    tok = token or _current_access_token()
+    return {"apikey": key, "Authorization": f"Bearer {tok or key}",
+            "Content-Type": "application/json"}
 
-def sign_up(email: str, password: str):
+# ---------- auth ----------
+def sign_up(email: str, password: str) -> Dict:
     url, _ = _get_keys()
-    r = requests.post(
-        f"{url}/auth/v1/signup",
-        json={"email": email, "password": password},
-        headers=_headers(), timeout=20
-    )
-    r.raise_for_status()
+    r = requests.post(f"{url}/auth/v1/signup",
+                      headers={"apikey": SUPABASE_ANON_KEY,
+                               "Content-Type": "application/json"},
+                      json={"email": email, "password": password}, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Sign-up failed: {r.status_code} {r.text}")
     return r.json()
 
-def sign_out():
-    st.session_state.pop("sb_user", None)
-
-# ---------- Folders & items ----------
-def create_folder(name: str, parent_id: Optional[str]):
+def sign_in(email: str, password: str) -> Dict:
     url, _ = _get_keys()
-    token, user = _require_user()
-    payload = {"name": name, "parent_id": parent_id, "user_id": user["id"]}
-    r = requests.post(
-        f"{url}/rest/v1/folders",
-        headers={**_headers(token), "Prefer": "return=representation"},
-        json=payload, timeout=20
-    )
-    r.raise_for_status()
-    return r.json()[0]
+    r = requests.post(f"{url}/auth/v1/token?grant_type=password",
+                      headers={"apikey": SUPABASE_ANON_KEY,
+                               "Content-Type": "application/json"},
+                      json={"email": email, "password": password}, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Sign-in failed: {r.status_code} {r.text}")
+    d = r.json()
+    _session.update({
+        "access_token": d.get("access_token"),
+        "refresh_token": d.get("refresh_token"),
+        "expires_at": _now() + int(d.get("expires_in", 3600)),
+        "user": d.get("user"),
+    })
+    return d
 
-def list_folders() -> List[Dict]:
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    r = requests.get(
-        f"{url}/rest/v1/folders",
-        headers=_headers(token),
-        params={"select": "id,name,parent_id,created_at", "order": "created_at.asc"},
-        timeout=20
-    )
-    r.raise_for_status()
-    return r.json()
+def sign_out(): _session.update({"access_token": None, "refresh_token": None,
+                                 "expires_at": 0, "user": None})
 
-def list_child_folders(parent_id: Optional[str]):
+# ---------- profiles ----------
+def get_profile() -> Dict:
     url, _ = _get_keys()
-    token, _ = _require_user()
-    params = {"select": "id,name,parent_id,created_at", "order": "created_at.asc"}
-    if parent_id is None:
-        params["parent_id"] = "is.null"
-    else:
-        params["parent_id"] = f"eq.{parent_id}"
-    r = requests.get(f"{url}/rest/v1/folders", headers=_headers(token), params=params, timeout=20)
-    r.raise_for_status()
-    return r.json()
-
-def delete_folder(folder_id: str):
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    r = requests.delete(
-        f"{url}/rest/v1/folders",
-        headers=_headers(token),
-        params={"id": f"eq.{folder_id}"},
-        timeout=20
-    )
-    r.raise_for_status()
-    return True
-
-def save_item(kind: str, title: str, data: dict, folder_id: Optional[str]):
-    url, _ = _get_keys()
-    token, user = _require_user()
-    payload = {"kind": kind, "title": title, "data": data, "folder_id": folder_id, "user_id": user["id"]}
-    r = requests.post(
-        f"{url}/rest/v1/items",
-        headers={**_headers(token), "Prefer": "return=representation"},
-        json=payload, timeout=30
-    )
-    r.raise_for_status()
-    return r.json()[0]
-
-def list_items(folder_id: Optional[str] = None, limit: int = 100) -> List[Dict]:
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    params = {"select": "id,kind,title,data,folder_id,created_at", "order": "created_at.desc", "limit": str(limit)}
-    if folder_id:
-        params["folder_id"] = f"eq.{folder_id}"
-    r = requests.get(f"{url}/rest/v1/items", headers=_headers(token), params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-def get_item(item_id: str) -> Dict:
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    r = requests.get(
-        f"{url}/rest/v1/items",
-        headers=_headers(token),
-        params={"id": f"eq.{item_id}", "select": "id,kind,title,data,folder_id,created_at"},
-        timeout=30
-    )
-    r.raise_for_status()
+    tok, user = _require_user(); uid = user["id"]
+    r = requests.get(f"{url}/rest/v1/profiles",
+                     headers=_headers(tok),
+                     params={"id": f"eq.{uid}", "select": "id,name,username"},
+                     timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Get profile failed: {r.status_code} {r.text}")
     rows = r.json()
-    if not rows:
-        raise RuntimeError("Item not found")
-    return rows[0]
+    base = rows[0] if rows else {"id": uid, "name": "", "username": ""}
+    base["email"] = user.get("email", "")
+    return base
 
-def move_item(item_id: str, new_folder_id: Optional[str]):
+def username_exists(username: str) -> bool:
     url, _ = _get_keys()
-    token, _ = _require_user()
-    r = requests.patch(
-        f"{url}/rest/v1/items",
-        headers={**_headers(token), "Prefer": "return=representation"},
-        params={"id": f"eq.{item_id}"},
-        json={"folder_id": new_folder_id},
-        timeout=20
-    )
-    r.raise_for_status()
-    return r.json()[0]
+    tok, _ = _require_user()
+    r = requests.get(f"{url}/rest/v1/profiles",
+                     headers=_headers(tok),
+                     params={"username": f"eq.{username}", "select": "id",
+                             "limit": "1"}, timeout=15)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Username check failed: {r.status_code} {r.text}")
+    return bool(r.json())
 
-def delete_item(item_id: str):
+def upsert_profile(name: str, username: str) -> Dict:
     url, _ = _get_keys()
-    token, _ = _require_user()
-    r = requests.delete(
-        f"{url}/rest/v1/items",
-        headers=_headers(token),
-        params={"id": f"eq.{item_id}"},
-        timeout=20
-    )
-    r.raise_for_status()
+    tok, user = _require_user(); uid = user["id"]
+    payload = {"id": uid, "name": name, "username": username}
+    r = requests.post(f"{url}/rest/v1/profiles",
+                      headers={**_headers(tok),
+                               "Prefer": "resolution=merge-duplicates,return=representation"},
+                      json=payload, timeout=20)
+    if 200 <= r.status_code < 300:
+        data = r.json(); return data[0] if isinstance(data, list) and data else payload
+    up = requests.patch(f"{url}/rest/v1/profiles",
+                        headers={**_headers(tok), "Prefer": "return=representation"},
+                        params={"id": f"eq.{uid}"}, json=payload, timeout=20)
+    if up.status_code >= 400:
+        raise RuntimeError(f"Update profile failed: {up.status_code} {up.text}")
+    data = up.json(); return data[0] if isinstance(data, list) and data else payload
+
+def change_password(new_password: str) -> bool:
+    url, _ = _get_keys(); tok, _ = _require_user()
+    r = requests.put(f"{url}/auth/v1/user",
+                     headers=_headers(tok),
+                     json={"password": new_password}, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Change password failed: {r.status_code} {r.text}")
     return True
 
-# ---------- Quiz attempts ----------
-def save_quiz_attempt(item_id: str, correct: int, total: int, history: list):
-    url, _ = _get_keys()
-    token, user = _require_user()
-    payload = {"user_id": user["id"], "item_id": item_id, "correct": int(correct), "total": int(total), "history": history}
-    r = requests.post(
-        f"{url}/rest/v1/quiz_attempts",
-        headers={**_headers(token), "Prefer": "return=representation"},
-        json=payload, timeout=20
-    )
-    r.raise_for_status()
+# ---------- folders / items ----------
+def create_folder(name: str, parent_id: Optional[str]) -> Dict:
+    url, _ = _get_keys(); tok, user = _require_user()
+    payload = {"name": name, "parent_id": parent_id, "user_id": user["id"]}
+    r = requests.post(f"{url}/rest/v1/folders",
+                      headers=_headers(tok), json=payload, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Create folder failed: {r.status_code} {r.text}")
     return r.json()[0]
 
-def list_quiz_attempts(item_id: Optional[str] = None, limit: int = 20):
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    params = {"select": "id,item_id,correct,total,created_at", "order": "created_at.desc", "limit": str(limit)}
-    if item_id:
-        params["item_id"] = f"eq.{item_id}"
-    r = requests.get(f"{url}/rest/v1/quiz_attempts", headers=_headers(token), params=params, timeout=20)
-    r.raise_for_status()
+def list_folders(parent_id: Optional[str] = None) -> List[Dict]:
+    url, _ = _get_keys(); tok, _ = _require_user()
+    if parent_id is None:
+        r = requests.get(f"{url}/rest/v1/folders?parent_id=is.null&select=*",
+                         headers=_headers(tok), timeout=20)
+    else:
+        r = requests.get(f"{url}/rest/v1/folders?parent_id=eq.{parent_id}&select=*",
+                         headers=_headers(tok), timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"List folders failed: {r.status_code} {r.text}")
     return r.json()
 
-def list_quiz_attempts_for_items(item_ids: List[str]) -> List[Dict]:
-    """Fetch attempts for multiple items (used for topic progress)."""
-    if not item_ids:
-        return []
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    ids_csv = "(" + ",".join(item_ids) + ")"
-    params = {
-        "select": "id,item_id,correct,total,created_at",
-        "order": "created_at.desc",
-        "item_id": f"in.{ids_csv}"
-    }
-    r = requests.get(f"{url}/rest/v1/quiz_attempts", headers=_headers(token), params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-# ---------- Flashcard reviews (✅/❌) ----------
-def save_flash_review(item_id: str, known: bool):
-    """
-    Insert a flashcard review event.
-    Table schema below in the SQL section.
-    """
-    url, _ = _get_keys()
-    token, user = _require_user()
-    payload = {"user_id": user["id"], "item_id": item_id, "known": bool(known)}
-    r = requests.post(
-        f"{url}/rest/v1/flashcard_reviews",
-        headers={**_headers(token), "Prefer": "return=representation"},
-        json=payload, timeout=15
-    )
-    r.raise_for_status()
+def save_item(folder_id: Optional[str], kind: str, title: str, data: dict) -> Dict:
+    url, _ = _get_keys(); tok, user = _require_user()
+    payload = {"folder_id": folder_id, "kind": kind, "title": title,
+               "data": data, "user_id": user["id"]}
+    r = requests.post(f"{url}/rest/v1/items",
+                      headers=_headers(tok), json=payload, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Save item failed: {r.status_code} {r.text}")
     return r.json()[0]
 
-def list_flash_reviews_for_items(item_ids: List[str]) -> List[Dict]:
-    if not item_ids:
-        return []
-    url, _ = _get_keys()
-    token, _ = _require_user()
-    ids_csv = "(" + ",".join(item_ids) + ")"
-    params = {
-        "select": "id,item_id,known,created_at",
-        "order": "created_at.desc",
-        "item_id": f"in.{ids_csv}"
-    }
-    r = requests.get(f"{url}/rest/v1/flashcard_reviews", headers=_headers(token), params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
 
 
