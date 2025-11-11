@@ -1,5 +1,5 @@
 import streamlit as st
-st.set_page_config(page_title="StudyBloom", page_icon="📚", initial_sidebar_state="expanded")
+st.markdown("<h1 class='title-main'>StudyBloom</h1>", unsafe_allow_html=True)
 # === Global theme & layout ===
 # =========================
 # LIGHT THEME + COMPACT UI
@@ -148,8 +148,6 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items,
     current_user, update_profile, change_password
 )
-
-st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
 
 # ---- Cookies (define BEFORE any dialog uses it) ----
 COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
