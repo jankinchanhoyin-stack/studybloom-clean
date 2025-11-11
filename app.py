@@ -732,7 +732,7 @@ def render_resources_page():
         with left:
             cont.markdown(
                 f"**{name}**  <span style='opacity:.6'>— {when}</span><br>"
-                f"<span style='opacity:.8'>{badge}</span>",
+                f"<span style='opacity:.8'> </span>",
                 unsafe_allow_html=True,
             )
         with right:
