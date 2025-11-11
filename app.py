@@ -626,82 +626,183 @@ def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, 
 
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
     st.subheader("🧪 Quiz")
-    if not questions: st.caption("No questions found."); return
-    st.session_state.setdefault(f"{key_prefix}_i",0)
-    st.session_state.setdefault(f"{key_prefix}_graded",False)
-    st.session_state.setdefault(f"{key_prefix}_feedback","")
-    st.session_state.setdefault(f"{key_prefix}_mark_last",(0,0))
-    st.session_state.setdefault(f"{key_prefix}_history",[])
-    i = st.session_state[f"{key_prefix}_i"]; i = max(0, min(i, len(questions)-1)); st.session_state[f"{key_prefix}_i"]=i
+    if not questions:
+        st.caption("No questions found.")
+        return
+
+    # ---------- Session state ----------
+    total = len(questions)
+    st.session_state.setdefault(f"{key_prefix}_i", 0)                 # current index pointer
+    st.session_state.setdefault(f"{key_prefix}_graded", False)        # whether the current Q has been graded
+    st.session_state.setdefault(f"{key_prefix}_feedback", "")
+    st.session_state.setdefault(f"{key_prefix}_mark_last", (0, 0))    # (score, max)
+    st.session_state.setdefault(f"{key_prefix}_history", [])          # per-Q {score,max}
+    st.session_state.setdefault(f"{key_prefix}_answered_set", set())  # indices answered at least once
+    st.session_state.setdefault(f"{key_prefix}_correct_set", set())   # indices currently judged correct (unique)
+
+    i = st.session_state[f"{key_prefix}_i"]
+    i = max(0, min(i, total - 1))
+    st.session_state[f"{key_prefix}_i"] = i
+
     q = questions[i]
     is_mcq = "options" in q and isinstance(q.get("options"), list)
 
-    st.progress((i+1)/len(questions), text=f"Question {i+1}/{len(questions)}")
+    # ---------- Progress (global) ----------
+    answered_set: set = st.session_state[f"{key_prefix}_answered_set"]
+    correct_set: set  = st.session_state[f"{key_prefix}_correct_set"]
+
+    answered = len(answered_set)
+    correct  = len(correct_set)
+    incorrect = max(0, answered - correct)
+    remaining = total - answered
+
+    # Progress bar shows answered/total; text displays correctness counts
+    st.progress(
+        answered / max(1, total),
+        text=f"Question {i+1}/{total} • ✅ {correct}  ❌ {incorrect}  • Remaining {remaining}"
+    )
+
+    # ---------- Render current question ----------
     st.markdown(f"### {q.get('question','')}")
+
+    def _mark_and_record(score: int, max_points: int, was_correct: bool):
+        """Update per-question state + history + sets."""
+        # Mark graded + last mark
+        st.session_state[f"{key_prefix}_graded"] = True
+        st.session_state[f"{key_prefix}_mark_last"] = (score, max_points)
+
+        # Update answered/correct sets for this index
+        answered_set.add(i)
+        if was_correct:
+            correct_set.add(i)
+        else:
+            if i in correct_set:
+                correct_set.discard(i)
+
+        # Ensure history has an entry for this index
+        hist = st.session_state[f"{key_prefix}_history"]
+        entry = {"score": score, "max": max_points, "correct": bool(was_correct)}
+        if len(hist) <= i:
+            # pad with blanks if needed
+            hist.extend([{} for _ in range(i - len(hist) + 1)])
+            hist[i] = entry
+        else:
+            hist[i] = entry
 
     if is_mcq:
         options = q.get("options") or []
+        # Use a unique key per question so Streamlit keeps selections per index
         choice = st.radio("Choose one", options, key=f"{key_prefix}_mcq_{i}", index=None)
-        col1,col2,col3 = st.columns(3)
+
+        col1, col2, col3 = st.columns(3)
+
         if col1.button("Submit", key=f"{key_prefix}_mcq_submit"):
             if choice is None:
                 st.warning("Pick an option first.")
             else:
-                correct = options.index(choice) == q.get("correct_index", -1)
-                st.session_state[f"{key_prefix}_graded"]=True
-                sc = 10 if correct else 0
-                st.session_state[f"{key_prefix}_mark_last"]=(sc,10)
-                hist = st.session_state[f"{key_prefix}_history"]
-                if len(hist)<=i: hist.append({"score": sc, "max":10})
-                else: hist[i]={"score": sc, "max":10}
-                st.success("Correct! ✅" if correct else "Not quite. ❌")
-                if q.get("explanation"): st.info(q["explanation"])
-        if col2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
-            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
-        if col3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
-            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
+                correct_idx = q.get("correct_index", -1)
+                is_correct = (options.index(choice) == correct_idx)
+                _mark_and_record(score=(10 if is_correct else 0), max_points=10, was_correct=is_correct)
+
+                st.success("Correct! ✅" if is_correct else "Not quite. ❌")
+                if q.get("explanation"):
+                    st.info(q["explanation"])
+
+        if col2.button("◀️ Prev", disabled=(i == 0), key=f"{key_prefix}_prev"):
+            st.session_state[f"{key_prefix}_i"] = i - 1
+            st.session_state[f"{key_prefix}_graded"] = False
+            st.rerun()
+
+        if col3.button("Next ▶️", disabled=(i == total - 1), key=f"{key_prefix}_next"):
+            st.session_state[f"{key_prefix}_i"] = i + 1
+            st.session_state[f"{key_prefix}_graded"] = False
+            st.rerun()
+
     else:
-        ans = st.text_area("Your answer", key=f"{key_prefix}_ans_{i}", height=120, placeholder="Type your working/answer here…")
+        ans = st.text_area(
+            "Your answer",
+            key=f"{key_prefix}_ans_{i}",
+            height=120,
+            placeholder="Type your working/answer here…"
+        )
+
         colg1, colg2, colg3, colg4 = st.columns(4)
+
         if colg1.button("Submit", key=f"{key_prefix}_submit"):
             try:
                 result = grade_free_answer(
-                    q.get("question",""), q.get("model_answer",""),
-                    q.get("markscheme_points",[]) or [], ans or "", subject_hint or "General"
+                    q.get("question",""),
+                    q.get("model_answer",""),
+                    q.get("markscheme_points",[]) or [],
+                    ans or "",
+                    subject_hint or "General"
                 )
-                st.session_state[f"{key_prefix}_graded"]=True
-                st.session_state[f"{key_prefix}_mark_last"]=(result.get("score",0), result.get("max_points",10))
-                st.session_state[f"{key_prefix}_feedback"]=result.get("feedback","")
-                hist = st.session_state[f"{key_prefix}_history"]
-                if len(hist)<=i: hist.append({"score": result.get("score",0), "max": result.get("max_points",10)})
-                else: hist[i]={"score": result.get("score",0), "max": result.get("max_points",10)}
+                score = int(result.get("score", 0) or 0)
+                maxp  = int(result.get("max_points", 10) or 10)
+                # same rule you use when saving attempts (>=70% is "correct")
+                is_correct = (maxp > 0 and score >= 0.7 * maxp)
+
+                _mark_and_record(score=score, max_points=maxp, was_correct=is_correct)
+
+                st.success(f"Score for this question: {score} / {maxp}")
+                if result.get("feedback"):
+                    st.info(result["feedback"])
             except Exception as e:
                 st.error(f"Grading failed: {e}")
+
         if st.session_state[f"{key_prefix}_graded"]:
             sc, mx = st.session_state[f"{key_prefix}_mark_last"]
-            st.success(f"Score for this question: {sc} / {mx}")
             with st.expander("Model answer & mark scheme", expanded=False):
                 st.markdown(q.get("model_answer",""))
-                for pt in q.get("markscheme_points",[]) or []: st.markdown(f"- {pt}")
-            if st.session_state[f"{key_prefix}_feedback"]:
-                st.info(st.session_state[f"{key_prefix}_feedback"])
-        if colg2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
-            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
-        if colg3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
-            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
+                for pt in q.get("markscheme_points",[]) or []:
+                    st.markdown(f"- {pt}")
 
-    total_sc = sum(h.get("score",0) for h in st.session_state[f"{key_prefix}_history"])
-    total_mx = sum(h.get("max",0)  for h in st.session_state[f"{key_prefix}_history"])
-    st.metric("Total so far", f"{total_sc} / {total_mx or (len(questions)*10)}")
-    save_col, new_col = st.columns(2)
-    if save_col.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
+        if colg2.button("◀️ Prev", disabled=(i == 0), key=f"{key_prefix}_prev"):
+            st.session_state[f"{key_prefix}_i"] = i - 1
+            st.session_state[f"{key_prefix}_graded"] = False
+            st.session_state[f"{key_prefix}_feedback"] = ""
+            st.rerun()
+
+        if colg3.button("Next ▶️", disabled=(i == total - 1), key=f"{key_prefix}_next"):
+            st.session_state[f"{key_prefix}_i"] = i + 1
+            st.session_state[f"{key_prefix}_graded"] = False
+            st.session_state[f"{key_prefix}_feedback"] = ""
+            st.rerun()
+
+    # ---------- Totals + Save ----------
+    total_sc = sum((h.get("score", 0) or 0) for h in st.session_state[f"{key_prefix}_history"] if isinstance(h, dict))
+    total_mx = sum((h.get("max",   0) or 0) for h in st.session_state[f"{key_prefix}_history"] if isinstance(h, dict))
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Answered", f"{answered}/{total}")
+    m2.metric("Correct", f"{correct}/{answered or 1}")
+    m3.metric("Score", f"{total_sc} / {total_mx or (total*10)}")
+
+    # Save attempt (uses your existing rule: correct if >=70% of marks for FR; true/false for MCQ)
+    if st.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
         if item_id and "sb_user" in st.session_state:
             try:
-                correct = sum(1 for h in st.session_state[f"{key_prefix}_history"] if h.get("max",0) and h.get("score",0) >= 0.7*h["max"])
-                total = len(questions); save_quiz_attempt(item_id, correct, total, st.session_state[f"{key_prefix}_history"])
-                st.success(f"Attempt saved: {correct}/{total}")
+                # If history has explicit "correct", use it. Otherwise fallback to score rule.
+                hist = st.session_state[f"{key_prefix}_history"]
+                corr = 0
+                tot  = 0
+                for idx, h in enumerate(hist):
+                    if not isinstance(h, dict) or ("score" not in h and "correct" not in h):
+                        continue
+                    tot += 1
+                    if "correct" in h:
+                        if h["correct"]: corr += 1
+                    else:
+                        sc = h.get("score", 0) or 0
+                        mx = h.get("max", 10) or 10
+                        if mx > 0 and sc >= 0.7 * mx:
+                            corr += 1
+                # If some questions weren’t answered, tot may be less than total; still save what we have
+                save_quiz_attempt(item_id, corr, (tot or total), hist)
+                st.success(f"Attempt saved: {corr}/{tot or total}")
             except Exception:
                 st.info("Attempt not saved (check quiz_attempts table).")
+
 
 # ---------------- Load folders ----------------
 if "sb_user" in st.session_state:
