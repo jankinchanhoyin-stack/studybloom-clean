@@ -879,7 +879,11 @@ else:
 
 def _roots(rows): return [r for r in rows if not r.get("parent_id")]  # subjects
 
-# ------------- Account Page -------------
+# ================================
+# My Account / Profile Page (Full)
+# ================================
+
+# --- Minimal CSS for this page ---
 st.markdown("""
 <style>
 #acct_signout button {
@@ -888,29 +892,39 @@ st.markdown("""
   background: #fff !important;
   border-radius: 10px !important;
   font-weight: 600 !important;
+  padding: .4rem .9rem !important;
 }
 #acct_signout button:hover { background: #fee2e2 !important; }
+.xp-box {
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  padding: .8rem .9rem;
+  background: #fff;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# Route check
 params = _get_params()
 is_account = (params.get("view") == "account") or (
     isinstance(params.get("view"), list) and params.get("view")[0] == "account"
 )
+
 if is_account:
-    # Back, top-left
-    bcol, _ = st.columns([1, 9])
-    if bcol.button("← Back", key="acct_back"):
+    # Top row: Back
+    back_col, _ = st.columns([1, 9])
+    if back_col.button("← Back", key="acct_back"):
         _set_params(view=None)
         st.rerun()
 
     st.title("My Account")
 
+    # Must be signed in
     if "sb_user" not in st.session_state:
         st.info("Please sign in first.")
         st.stop()
 
-    # --- Load current user ---
+    # Load current user
     try:
         u = current_user()
     except Exception as e:
@@ -922,8 +936,10 @@ if is_account:
     curr_username = meta.get("username", "")
     curr_email   = u.get("email", "")
 
-    # --- Profile (left) + Password (right) ---
-    cL, cR = st.columns([3, 2])
+    # ==============
+    # Profile & Auth
+    # ==============
+    cL, cR = st.columns([3, 2], gap="large")
 
     with cL:
         st.subheader("Profile")
@@ -934,7 +950,7 @@ if is_account:
         if st.button("Save profile", type="primary", key="acct_save_profile"):
             try:
                 update_profile(display_name=nd, username=nu)
-                # refresh in-memory user so header reflects changes
+                # refresh in-memory user so header/places reflect changes
                 st.session_state["sb_user"]["user"]["user_metadata"] = {
                     **(st.session_state["sb_user"]["user"].get("user_metadata") or {}),
                     "display_name": nd,
@@ -962,40 +978,79 @@ if is_account:
 
     st.divider()
 
-    # -------- XP (Daily + Monthly) --------
-    st.subheader("Your XP")
+    # =======
+    # XP Area
+    # =======
+    st.subheader("✨Your XP")
 
-    # Compute
-    fc_today, qz_today   = compute_xp("today")
-    fc_month, qz_month   = compute_xp("month")
+    # Fetch XP (requires compute_xp() helper defined previously)
+    fc_today, qz_today   = compute_xp("today")   # returns (flashcards_known_today, quiz_correct_today)
+    fc_month, qz_month   = compute_xp("month")   # returns (flashcards_known_month, quiz_correct_month)
+
     xp_today  = fc_today + qz_today
     xp_month  = fc_month + qz_month
 
-    # Goals (tweak if you like)
-    DAILY_XP_GOAL   = 30
-    MONTHLY_XP_GOAL = 600
+    # Targets
+    DAILY_XP_GOAL   = 60
+    MONTHLY_XP_GOAL = 3000
 
-    colA, colB = st.columns([3, 2])
-    with colA:
-        st.write(f"**Today's XP**: {xp_today} / {DAILY_XP_GOAL}")
-        st.progress(min(1.0, xp_today / max(1, DAILY_XP_GOAL)))
-    with colB:
-        st.metric("Flashcards ✅ today", fc_today)
-        st.metric("Quiz correct today", qz_today)
+    # Checkpoints (month)
+    CHECKPOINTS = [
+        (1000, "Rising Scholar"),
+        (2000, "Seasoned Scholar"),
+        (3000, "Master Scholar"),
+    ]
 
-    colC, colD = st.columns([3, 2])
-    with colC:
-        st.write(f"**This Month's XP**: {xp_month} / {MONTHLY_XP_GOAL}")
-        st.progress(min(1.0, xp_month / max(1, MONTHLY_XP_GOAL)))
-    with colD:
-        st.metric("Flashcards ✅ this month", fc_month)
-        st.metric("Quiz correct this month", qz_month)
+    # Ratios for progress bars (cap visuals at 100%, keep counting in text)
+    daily_ratio   = min(1.0, xp_today / max(1, DAILY_XP_GOAL))
+    monthly_ratio = min(1.0, xp_month / max(1, MONTHLY_XP_GOAL))
 
-    st.caption("XP counts flashcards you marked **Knew it** and quiz questions you got right from **saved attempts**.")
+    with st.container():
+        # Row 1: Daily XP
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.markdown("<div class='xp-box'>", unsafe_allow_html=True)
+            label = f"**Today's XP**: {xp_today} / {DAILY_XP_GOAL}"
+            if xp_today > DAILY_XP_GOAL:
+                label += f"  •  🎉 exceeded by {xp_today - DAILY_XP_GOAL}"
+            st.write(label)
+            st.progress(daily_ratio)
+            st.caption("Daily XP = Flashcards you marked **Knew it** + Quiz questions answered correctly (from saved attempts) today.")
+            st.markdown("</div>", unsafe_allow_html=True)
+        with c2:
+            st.metric("Flashcards ✅ today", fc_today)
+            st.metric("Quiz correct today", qz_today)
+
+        # Row 2: Monthly XP + checkpoints
+        c3, c4 = st.columns([3, 2])
+        with c3:
+            st.markdown("<div class='xp-box'>", unsafe_allow_html=True)
+            label = f"**This Month's XP**: {xp_month} / {MONTHLY_XP_GOAL}"
+            if xp_month > MONTHLY_XP_GOAL:
+                label += f"  •  🎉 exceeded by {xp_month - MONTHLY_XP_GOAL}"
+            st.write(label)
+            st.progress(monthly_ratio)
+
+            reached = [(cp, name) for cp, name in CHECKPOINTS if xp_month >= cp]
+            if reached:
+                last_cp, last_name = reached[-1]
+                st.success(f"Checkpoint reached: **{last_name}** ({last_cp} XP).")
+            next_cp = next(((cp, name) for cp, name in CHECKPOINTS if xp_month < cp), None)
+            if next_cp:
+                cp_val, cp_name = next_cp
+                st.caption(f"Next checkpoint: **{cp_name}** at {cp_val} XP — {max(0, cp_val - xp_month)} to go.")
+            else:
+                st.caption("All monthly checkpoints achieved — amazing!")
+            st.markdown("</div>", unsafe_allow_html=True)
+        with c4:
+            st.metric("Flashcards ✅ this month", fc_month)
+            st.metric("Quiz correct this month", qz_month)
 
     st.divider()
 
-    # Right-aligned Sign out button
+    # =========
+    # Sign out
+    # =========
     _, sign_col = st.columns([6, 1])
     with sign_col:
         if st.button("Sign out", key="acct_signout"):
