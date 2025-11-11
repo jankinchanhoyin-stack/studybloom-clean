@@ -1,4 +1,33 @@
 import sys, importlib.util, os
+import re
+
+def extract_verbatim_definitions(raw_text: str, max_defs: int = 120) -> list[dict]:
+    """
+    Naive extractor for 'Term: definition' or 'Term - definition' lines.
+    Keeps the EXACT wording after the delimiter. Returns list of {"term","definition"}.
+    """
+    defs = []
+    seen = set()
+    # Work line by line to keep original wording / punctuation
+    for line in raw_text.splitlines():
+        l = line.strip()
+        if not l or len(l) < 5:
+            continue
+        # Common patterns: Term: Def..., Term - Def..., Term — Def...
+        m = re.match(r"^(.{2,100}?)\s*[:\-–—]\s*(.+)$", l)
+        if m:
+            term = m.group(1).strip()
+            definition = m.group(2).strip()
+            # Heuristics to avoid false positives
+            if len(term) <= 80 and len(definition) >= 3:
+                key = term.lower()
+                if key not in seen:
+                    seen.add(key)
+                    defs.append({"term": term, "definition": definition})
+                    if len(defs) >= max_defs:
+                        break
+    return defs
+
 
 def _import_local_or_data(mod_name: str, filename: str):
     """Try regular import; if it fails, load from /mnt/data/<filename>."""
