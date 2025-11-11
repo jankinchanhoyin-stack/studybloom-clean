@@ -763,9 +763,11 @@ with tabs[0]:
             st.header("3) Topic")
             topic_ok = False
             topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
-            topic_ok = bool((topic_name_input or "").strip())
+            # ✅ persist to a stable key every run
+            st.session_state["qs_topic_name"] = (st.session_state.get("qs_new_topic") or "").strip()
+            topic_ok = bool(st.session_state["qs_topic_name"])
             _nav(next_ok=topic_ok)
-
+            
         # ---------- STEP 3: Subject hint / audience / detail ----------
         elif st.session_state["qs_step"] == 3:
             st.header("4) Subject context")
