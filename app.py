@@ -344,10 +344,14 @@ def topbar():
                 if c3.button("Sign up", key="tb_signup"):
                     _route_set("signup")
             else:
-                user = st.session_state["sb_user"]["user"]
-                prof = get_profile(user.get("id")) or {}
+                user = (st.session_state.get("sb_user") or {}).get("user") or {}
+                if st.button("Save profile", type="primary"):
+                    try:
+                        upsert_profile(uid, name=name, username=username, avatar_url=avatar_url)
+                        st.success("Profile saved.")
+                    except Exception as e:
+                        st.error("Profile table may be missing or blocked by RLS. See notes below.")
                 avatar = prof.get("avatar_url") or "https://placehold.co/64x64?text=U"
-                # avatar as button:
                 if c3.button("My Account", key="tb_myacct"):
                     _route_set("account")
                 c2.image(avatar, caption="", width=34)
