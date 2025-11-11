@@ -2,51 +2,6 @@ import streamlit as st
 
 st.markdown("""
 <style>
-/* Use a clean modern font */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-html, body, [class*="css"] {
-  font-family: 'Inter', sans-serif;
-}
-
-/* Make the main working area wider but centered */
-.block-container {
-  max-width: 1200px !important;   /* widen layout */
-  padding: 1.5rem 2rem !important;
-  margin: 0 auto !important;
-  border-left: 1px solid #e5e7eb;  /* soft page borders */
-  border-right: 1px solid #e5e7eb;
-}
-
-/* Narrower input and selection boxes */
-.stTextInput>div, .stSelectbox>div, .stTextArea>div, .stMultiSelect>div,
-[data-baseweb="select"], [data-baseweb="input"], [data-baseweb="textarea"] {
-  max-width: 480px !important;     /* narrower form fields */
-  width: 480px !important;
-}
-
-/* Improve input styling slightly */
-.stTextInput input, .stTextArea textarea {
-  border-radius: 8px !important;
-  border: 1px solid #1e3a8a !important;
-  padding: 0.4rem 0.6rem !important;
-}
-
-/* Headings styling */
-h1, h2, h3 {
-  color: #1e3a8a !important;
-  margin-bottom: 0.5rem;
-}
-
-/* Optional: space out sections slightly */
-div[data-testid="stVerticalBlock"] {
-  margin-bottom: 0.75rem !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-st.markdown("""
-<style>
 .stButton > button { white-space: nowrap !important; padding: .35rem .65rem !important; line-height: 1.1 !important; }
 .small-btn .stButton > button { padding: .25rem .5rem !important; font-size: .9rem !important; }
 </style>
