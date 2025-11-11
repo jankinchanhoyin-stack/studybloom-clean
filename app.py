@@ -778,20 +778,15 @@ with tabs[0]:
         )
 
         if gen_clicked and can_generate:
-            # persist IDs for the next rerun so buttons work
-            st.session_state["qs_created_summary_id"] = summary_id
-            st.session_state["qs_created_flash_id"]   = flash_id
-            st.session_state["qs_created_quiz_id"]    = quiz_id
             # Resolve destination folders freshly
             subjects = _roots(list_folders())
             subj_map = {s["name"]: s["id"] for s in subjects}
-            # resolve again in case user just created items
             subject_id = subject_id or subj_map.get(st.session_state.get("qs_subject_pick"))
-
+        
             exams = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
             exam_map = {e["name"]: e["id"] for e in exams}
             exam_id = exam_id or exam_map.get(st.session_state.get("qs_exam_pick"))
-
+        
             # Create the topic now (and catch clashes)
             topic_id = None
             topic_name = (st.session_state.get("qs_new_topic") or "").strip()
@@ -803,9 +798,9 @@ with tabs[0]:
                 created = create_folder(topic_name, exam_id)
                 topic_id = created["id"]
                 topic_name = created["name"]
-
+        
             dest_folder = topic_id or exam_id or subject_id or None
-
+        
             # Base title (Topic > Exam > Subject > subject_hint)
             base_title = (
                 topic_name
@@ -813,7 +808,7 @@ with tabs[0]:
                 or (next((s["name"] for s in subjects if s["id"] == subject_id), None) if subject_id else None)
                 or (subject_hint or "Study Pack")
             )
-
+        
             prog = st.progress(0, text="Starting…")
             try:
                 prog.progress(10, text="Extracting text…")
@@ -821,17 +816,17 @@ with tabs[0]:
                 if not text.strip():
                     st.error("No text detected in the uploaded files.")
                     st.stop()
-
+        
                 prog.progress(35, text="Summarising with AI…")
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-
+        
                 prog.progress(60, text="Generating flashcards & quiz…")
                 cards = []
                 try:
                     cards = generate_flashcards_from_notes(data, audience=audience)
                 except Exception as e:
                     st.warning(f"Flashcards skipped: {e}")
-
+        
                 qs = generate_quiz_from_notes(
                     data,
                     subject=subject_hint,
@@ -840,46 +835,51 @@ with tabs[0]:
                     mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
                     mcq_options=mcq_options,
                 )
-
+        
                 prog.progress(85, text="Saving items…")
                 title_notes = f"📄 {base_title} — Notes"
                 title_flash = f"🧠 {base_title} — Flashcards"
                 title_quiz  = f"🧪 {base_title} — Quiz"
-
+        
                 summary = save_item("summary", title_notes, data, dest_folder)
                 summary_id = summary.get("id")
                 flash_id = quiz_id = None
-
+        
                 if cards:
                     flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
                     flash_id = flash.get("id")
-
+        
                 quiz_payload = {"questions": qs}
                 if quiz_mode == "Multiple choice":
                     quiz_payload["type"] = "mcq"
                 quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
                 quiz_id = quiz_item.get("id")
-
+        
                 prog.progress(100, text="Done!")
                 st.success("Saved ✅")
-
-                # --- Always show "Open" for last generated items, if present ---
-                sid = st.session_state.get("qs_created_summary_id")
-                fid = st.session_state.get("qs_created_flash_id")
-                qid = st.session_state.get("qs_created_quiz_id")
-                
-                if sid or fid or qid:
-                    st.markdown("### Open")
-                    c1, c2, c3 = st.columns(3)
-                    if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
-                        _set_params(item=sid, view="all"); st.rerun()
-                    if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
-                        _set_params(item=fid, view="all"); st.rerun()
-                    if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-                        _set_params(item=qid, view="all"); st.rerun()
-
+        
+                # ✅ Save IDs for persistence across reruns
+                st.session_state["qs_created_summary_id"] = summary_id or None
+                st.session_state["qs_created_flash_id"]   = flash_id or None
+                st.session_state["qs_created_quiz_id"]    = quiz_id or None
+        
             except Exception as e:
                 st.error(f"Generation failed: {e}")
+        
+        # --- Always show "Open" buttons for last generated items ---
+        sid = st.session_state.get("qs_created_summary_id")
+        fid = st.session_state.get("qs_created_flash_id")
+        qid = st.session_state.get("qs_created_quiz_id")
+        
+        if sid or fid or qid:
+            st.markdown("### Open")
+            c1, c2, c3 = st.columns(3)
+            if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
+                _set_params(item=sid, view="all"); st.rerun()
+            if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
+                _set_params(item=fid, view="all"); st.rerun()
+            if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
+                _set_params(item=qid, view="all"); st.rerun()
 
 
 # ===== Resources =====
