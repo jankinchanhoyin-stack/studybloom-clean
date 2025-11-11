@@ -130,8 +130,9 @@ if st_dialog:
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
-        if c2.button("Use sign up instead", key="dlg_to_signup"):
-            _open_dialog(signup_dialog)
+        if c2.button("Sign Up", key="dlg_to_signup"):
+            st.session_state["want_dialog"] = "signup"
+            st.rerun()
 
     @st_dialog("Create account")
     def signup_dialog():
@@ -149,7 +150,8 @@ if st_dialog:
             except Exception as e:
                 st.error(str(e))
         if c2.button("Have an account? Sign in", key="dlg_to_login"):
-            _open_dialog(login_dialog)
+            st.session_state["want_dialog"] = "login"
+            st.rerun()
 else:
     def login_dialog(): st.warning("Dialog not supported in this environment.")
     def signup_dialog(): st.warning("Dialog not supported in this environment.")
