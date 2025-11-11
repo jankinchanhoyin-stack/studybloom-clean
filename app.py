@@ -280,7 +280,25 @@ if st.session_state.get("just_logged_out"):
     st.session_state.pop("just_logged_out")
 
 
+# Right: Buttons (Account Icon + Sign Out)
+st.markdown("<div class='header-buttons'>", unsafe_allow_html=True)
+col1, col2 = st.columns([0.25, 1.5])
 
+with col1:
+    st.markdown("<div class='account-icon'>", unsafe_allow_html=True)
+    if st.button("👤", key="account_icon_top"):
+        _set_params(view="account")
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with col2:
+    st.markdown("<div class='signout'>", unsafe_allow_html=True)
+    if st.button("Sign out", key="signout_top"):
+        sign_out()
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ---------------- Query helpers (needed by top bar) ----------------
 def _get_params() -> Dict[str, str]:
