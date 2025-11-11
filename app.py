@@ -1295,10 +1295,39 @@ _v = _get_params().get("view")
 view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
 with st.sidebar:
-    st.markdown("<div class='nav-list'>", unsafe_allow_html=True)
-    _nav_row("🏠 Home",      None,        key="nav_home", active=(view_param==""))
-    _nav_row("🧭 Resources", "resources", key="nav_res",  active=(view_param=="resources"))
-    _nav_row("🗂️ All",      "all",       key="nav_all",  active=(view_param=="all"))
+    st.markdown("<div class='sidebar-top'>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("<div class='account-btn'>", unsafe_allow_html=True)
+        if st.button("👤", key="account_icon"):
+            _set_params(view="account")
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Middle navigation buttons
+    st.markdown("<div class='sidebar-middle'>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("<div class='nav-btn'>", unsafe_allow_html=True)
+        if st.button("🏠 Home", key="home_btn"):
+            _set_params(view="home")
+            st.rerun()
+        if st.button("🧭 Resources", key="resources_btn"):
+            _set_params(view="resources")
+            st.rerun()
+        if st.button("📁 All", key="allresources_btn"):
+            _set_params(view="all")
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Bottom sign out button
+    st.markdown("<div class='sidebar-bottom'>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("<div class='signout-btn'>", unsafe_allow_html=True)
+        if st.button("Sign out", key="signout_btn"):
+            sign_out()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ===== Default: Home (Quick Study) =====
