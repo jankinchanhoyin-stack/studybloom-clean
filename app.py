@@ -1,18 +1,12 @@
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
+
 # ---- CSS: compact action buttons, avoid wrapping ----
 st.markdown("""
 <style>
-.stButton > button {
-  white-space: nowrap !important;
-  padding: .35rem .65rem !important;
-  line-height: 1.1 !important;
-}
-.small-btn .stButton > button {
-  padding: .25rem .5rem !important;
-  font-size: .9rem !important;
-}
+.stButton > button { white-space: nowrap !important; padding: .35rem .65rem !important; line-height: 1.1 !important; }
+.small-btn .stButton > button { padding: .25rem .5rem !important; font-size: .9rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -31,23 +25,134 @@ from auth_rest import (
     save_item, list_items, get_item, move_item, delete_item,
     create_folder, list_folders, delete_folder, list_child_folders,
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
-    save_flash_review, list_flash_reviews_for_items, current_user, update_profile, change_password
+    save_flash_review, list_flash_reviews_for_items,
+    current_user, update_profile, change_password
 )
 
 st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
 
+# ---- Cookies (define BEFORE any dialog uses it) ----
+COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
+cookies = None
+try:
+    from streamlit_cookies_manager import EncryptedCookieManager
+    cookies = EncryptedCookieManager(prefix="studybloom.", password=COOKIE_PASSWORD)
+    if not cookies.ready():
+        st.stop()
+except Exception:
+    cookies = None  # proceed without cookies if not installed
+
+def _fetch_user_from_token(access_token: str) -> Optional[dict]:
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
+        h = {"apikey": key, "Authorization": f"Bearer {access_token}"}
+        r = requests.get(f"{url}/auth/v1/user", headers=h, timeout=15)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+# Restore session from cookie if present (BEFORE any auto-prompt)
+if "sb_user" not in st.session_state and cookies:
+    tok = cookies.get("sb_access")
+    if tok:
+        user = _fetch_user_from_token(tok)
+        if user:
+            st.session_state["sb_user"] = {"user": user, "access_token": tok}
+
+# ---------------- Query helpers (needed by top bar) ----------------
+def _get_params() -> Dict[str, str]:
+    try: return dict(st.query_params)
+    except: return st.experimental_get_query_params()
+
+def _set_params(**kwargs):
+    try:
+        st.query_params.clear()
+        st.query_params.update(kwargs)
+    except Exception:
+        st.experimental_set_query_params(**kwargs)
+
+# ---------------- Supabase REST helpers ----------------
+def _sb_headers():
+    url = st.secrets.get("SUPABASE_URL")
+    key = (st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY"))
+    if not url or not key:
+        raise RuntimeError("Missing SUPABASE_URL / SUPABASE_ANON_KEY (or SUPABASE_KEY).")
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    return url, headers
+
+def rename_item(item_id: str, new_title: str) -> dict:
+    url, headers = _sb_headers()
+    resp = requests.patch(f"{url}/rest/v1/items?id=eq.{item_id}",
+                          json={"title": new_title}, headers=headers, timeout=20)
+    resp.raise_for_status(); data = resp.json()
+    return data[0] if isinstance(data, list) and data else {}
+
+def rename_folder(folder_id: str, new_name: str) -> dict:
+    url, headers = _sb_headers()
+    resp = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}",
+                          json={"name": new_name}, headers=headers, timeout=20)
+    resp.raise_for_status(); data = resp.json()
+    return data[0] if isinstance(data, list) and data else {}
 
 # ---------- Dialog capability ----------
 HAS_DIALOG = hasattr(st, "experimental_dialog")
-if HAS_DIALOG:
-    st_dialog = st.experimental_dialog
-else:
-    st_dialog = None
-# ---------- Auto-prompt login on entry ----------
-if ("sb_user" not in st.session_state) and (not st.session_state.get("auth_prompted")) and (st_dialog is not None):
-    st.session_state["auth_prompted"] = True
-    login_dialog()
+st_dialog = st.experimental_dialog if HAS_DIALOG else None
 
+# ---------- Auth dialogs (define ONCE) ----------
+def _open_dialog(fn): fn()
+
+if st_dialog:
+    @st_dialog("Sign in")
+    def login_dialog():
+        st.write("Welcome back! Please sign in.")
+        email = st.text_input("Email", key="dlg_login_email")
+        pwd   = st.text_input("Password", type="password", key="dlg_login_pwd")
+        remember = st.checkbox("Stay signed in", value=True, key="dlg_login_remember")
+        c1, c2 = st.columns(2)
+        if c1.button("Sign in", type="primary", key="dlg_login_btn"):
+            try:
+                sign_in(email, pwd)  # sets st.session_state["sb_user"]
+                if remember and cookies and "sb_user" in st.session_state:
+                    tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
+                    if tok:
+                        cookies["sb_access"] = tok
+                        cookies["sb_email"] = email or ""
+                        cookies.save()
+                st.session_state["auth_prompted"] = True
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+        if c2.button("Use sign up instead", key="dlg_to_signup"):
+            _open_dialog(signup_dialog)
+
+    @st_dialog("Create account")
+    def signup_dialog():
+        st.write("Create your StudyBloom account.")
+        disp  = st.text_input("Display name", key="dlg_sign_display")
+        uname = st.text_input("Username", key="dlg_sign_username")
+        email = st.text_input("Email", key="dlg_sign_email")
+        pwd   = st.text_input("Password", type="password", key="dlg_sign_pwd")
+        c1, c2 = st.columns(2)
+        if c1.button("Sign up", type="primary", key="dlg_signup_btn"):
+            try:
+                sign_up(email, pwd, disp, uname)
+                st.success("Check your email to confirm, then sign in.")
+                _open_dialog(login_dialog)
+            except Exception as e:
+                st.error(str(e))
+        if c2.button("Have an account? Sign in", key="dlg_to_login"):
+            _open_dialog(login_dialog)
+else:
+    def login_dialog(): st.warning("Dialog not supported in this environment.")
+    def signup_dialog(): st.warning("Dialog not supported in this environment.")
 
 # ---------- Top bar ----------
 def _topbar():
@@ -56,27 +161,20 @@ def _topbar():
         st.markdown("### StudyBloom")
     with right:
         if "sb_user" not in st.session_state:
-            c1, c2 = st.columns([1,1])
+            c1, c2 = st.columns(2)
             if c1.button("Log in", key="top_login"):
-                if st_dialog is not None:
-                    login_dialog()
-                else:
-                    st.warning("Pop-up dialog not supported here. (You can still add an /auth page if you want.)")
-            
+                if st_dialog is not None: login_dialog()
+                else: st.warning("Pop-up dialog not supported here.")
             if c2.button("Sign up", key="top_signup"):
-                if st_dialog is not None:
-                    signup_dialog()
-                else:
-                    st.warning("Pop-up dialog not supported here. (You can still add an /auth page if you want.)")
-
+                if st_dialog is not None: signup_dialog()
+                else: st.warning("Pop-up dialog not supported here.")
         else:
             user_email = st.session_state["sb_user"]["user"].get("email","account")
             disp = st.session_state["sb_user"]["user"].get("user_metadata",{}).get("display_name") or ""
             label = disp or user_email
-            c1, c2 = st.columns([1,1])
+            c1, c2 = st.columns(2)
             if c1.button("My account", key="top_account"):
-                _set_params(view="account")
-                st.rerun()
+                _set_params(view="account"); st.rerun()
             if c2.button("Sign out", key="top_logout"):
                 if cookies:
                     if "sb_access" in cookies: del cookies["sb_access"]
