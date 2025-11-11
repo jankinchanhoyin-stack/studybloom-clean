@@ -33,17 +33,60 @@ def _require_user() -> Tuple[str, Dict]:
     return user["access_token"], user["user"]
 
 # ---------- Auth ----------
+import requests
+import streamlit as st
+
+def _supabase_auth_headers_for_client():
+    """
+    Use the ANON key for auth endpoints (GoTrue). Do NOT send the service key here.
+    """
+    url = st.secrets.get("SUPABASE_URL")
+    anon = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY")
+    if not url or not anon:
+        raise RuntimeError("Missing SUPABASE_URL and/or SUPABASE_ANON_KEY in secrets.")
+    # GoTrue only needs apikey; do NOT include Authorization: Bearer <service> on auth endpoints.
+    return url, {"apikey": anon, "Content-Type": "application/json"}
+
 def sign_in(email: str, password: str):
-    url, _ = _get_keys()
+    """
+    Password grant sign in via GoTrue. Returns {'access_token':..., 'user':{...}, ...}
+    Raises RuntimeError with a helpful message if it fails (e.g. email not confirmed).
+    """
+    url, headers = _supabase_auth_headers_for_client()
+    email = (email or "").strip()
+
+    payload = {
+        "email": email,
+        "password": password or "",
+        "gotrue_meta_security": {}  # avoids some UA/CSRF heuristics on some deployments
+    }
+
     r = requests.post(
         f"{url}/auth/v1/token?grant_type=password",
-        json={"email": email, "password": password},
-        headers=_headers(), timeout=20
+        headers=headers,
+        json=payload,
+        timeout=20,
     )
-    r.raise_for_status()
-    data = r.json()
-    st.session_state["sb_user"] = {"access_token": data["access_token"], "user": data["user"]}
+    # If invalid, GoTrue returns JSON like {"error":"invalid_grant","error_description":"Invalid login credentials"}
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = {}
+        code = err.get("error") or "auth_error"
+        desc = err.get("error_description") or r.text
+        raise RuntimeError(f"Sign-in failed ({code}): {desc}")
+
+    data = r.json()  # includes access_token, refresh_token, token_type, user
+    # Optional: normalize to your app’s session shape
+    st.session_state["sb_user"] = {
+        "access_token": data.get("access_token"),
+        "refresh_token": data.get("refresh_token"),
+        "user": data.get("user") or {},
+        "session": data,
+    }
     return data
+
 
 def sign_up(email: str, password: str, display_name: str = "", username: str = ""):
     url, _ = _get_keys()
