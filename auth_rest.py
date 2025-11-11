@@ -6,6 +6,7 @@ import streamlit as st
 import requests
 import streamlit as st
 from datetime import datetime, timezone, timedelta  # if you use the XP helpers here
+from urllib.parse import quote_plus
 
 
 def _get_keys() -> Tuple[str, str]:
@@ -365,24 +366,18 @@ def _iso_start_of_next_month_utc() -> str:
     return start.isoformat()
 
 def _sb_headers():
-    """
-    Returns (base_url, headers) for Supabase REST calls using the anon/service key.
-    Keep this in auth_rest.py so functions here don't depend on app.py.
-    """
     url = st.secrets.get("SUPABASE_URL")
-    key = (
-        st.secrets.get("SUPABASE_ANON_KEY")
-        or st.secrets.get("SUPABASE_KEY")
-    )
+    key = (st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")  # if you have service role, prefer it for server-side
+           or st.secrets.get("SUPABASE_KEY")
+           or st.secrets.get("SUPABASE_ANON_KEY"))
     if not url or not key:
-        raise RuntimeError("Missing SUPABASE_URL / SUPABASE_ANON_KEY (or SUPABASE_KEY).")
-    headers = {
+        raise RuntimeError("Missing SUPABASE_URL / key in secrets.")
+    return url, {
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
-    return url, headers
 
 def sb_find_profile_by_username(username: str) -> Optional[dict]:
     if not username:
@@ -506,23 +501,32 @@ from typing import List, Dict, Optional
 # _sb_headers() must already be defined in this file:
 # def _sb_headers(): ...  (returns (url, headers))
 
-def _me_id() -> Optional[str]:
-    u = (st.session_state.get("sb_user") or {}).get("user") or {}
-    return u.get("id")
+def _me_id() -> str | None:
+    """Return current auth uid from session_state."""
+    user = (st.session_state.get("sb_user") or {}).get("user") or {}
+    return user.get("id") or user.get("user_id") or None
 
-def sb_find_user_by_username(username: str) -> Optional[dict]:
-    """Return {'user_id','username','display_name'} for a username, or None."""
+def sb_find_profile_by_username(username: str) -> dict | None:
+    """
+    Look up a profile row by username. Assumes profiles has columns:
+      id (uuid auth.uid), username (text unique), display_name (text)
+    """
     if not username:
         return None
     url, headers = _sb_headers()
-    r = requests.get(
-        f"{url}/rest/v1/profiles?username=eq.{username}&select=user_id,username,display_name",
-        headers=headers, timeout=20
-    )
+    # Use params to avoid URL formatting bugs
+    params = {
+        "username": f"eq.{username}",
+        "select": "id,username,display_name",
+        "limit": 1,
+    }
+    r = requests.get(f"{url}/rest/v1/profiles", headers=headers, params=params, timeout=20)
+    if r.status_code == 406:  # empty response handling
+        return None
     r.raise_for_status()
     rows = r.json()
     return rows[0] if rows else None
-
+    
 def sb_is_already_friends(a_user_id: str, b_user_id: str) -> bool:
     url, headers = _sb_headers()
     q = f"{url}/rest/v1/friends?user_id=eq.{a_user_id}&friend_user_id=eq.{b_user_id}&select=id"
@@ -530,153 +534,164 @@ def sb_is_already_friends(a_user_id: str, b_user_id: str) -> bool:
     r.raise_for_status()
     return bool(r.json())
 
-def sb_send_friend_request(to_username: str) -> str:
+def sb_send_friend_request(target_username: str) -> str:
     """
-    Create a pending friend request to the given username.
-    Returns a human-readable result string.
+    Create a pending friend request to target_username.
+    Table: friend_requests (id uuid, requester_id uuid, recipient_id uuid, status text)
+    Valid statuses: 'pending','accepted','rejected'
     """
     me = _me_id()
     if not me:
-        return "Please sign in."
-    target = sb_find_user_by_username(to_username)
+        return "Please sign in first."
+
+    # 1) Find recipient
+    target = sb_find_profile_by_username((target_username or "").strip())
     if not target:
         return "No user with that username."
-    to_id = target["user_id"]
-    if to_id == me:
-        return "You can't add yourself."
-
-    # Already friends?
-    if sb_is_already_friends(me, to_id) or sb_is_already_friends(to_id, me):
-        return "You’re already friends."
+    recipient_id = target["id"]
+    if recipient_id == me:
+        return "You can’t send a request to yourself."
 
     url, headers = _sb_headers()
 
-    # If there is already a pending request between the same two users, do nothing
-    # Check both directions
-    check = requests.get(
-        f"{url}/rest/v1/friend_requests"
-        f"?or=(and(requester_id.eq.{me},recipient_id.eq.{to_id}),and(requester_id.eq.{to_id},recipient_id.eq.{me}))"
-        f"&select=id,status",
-        headers=headers, timeout=20
-    )
+    # 2) Block duplicates in either direction while pending
+    # requester_id=me,recipient_id=them OR requester_id=them,recipient_id=me with status pending
+    params = {
+        "or": f"(and(requester_id.eq.{me},recipient_id.eq.{recipient_id}),and(requester_id.eq.{recipient_id},recipient_id.eq.{me}))",
+        "status": "eq.pending",
+        "select": "id",
+        "limit": 1,
+    }
+    check = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=params, timeout=20)
     check.raise_for_status()
-    exists = [r for r in check.json() if r.get("status") in ("pending",)]
+    exists = check.json()
     if exists:
         return "A pending request already exists."
 
-    # Create request
-    r = requests.post(
-        f"{url}/rest/v1/friend_requests",
-        headers=headers,
-        json={"requester_id": me, "recipient_id": to_id, "status": "pending"},
-        timeout=20
-    )
+    # 3) Insert pending request
+    payload = {
+        "requester_id": me,
+        "recipient_id": recipient_id,
+        "status": "pending",
+    }
+    r = requests.post(f"{url}/rest/v1/friend_requests", headers=headers, json=payload, timeout=20)
     r.raise_for_status()
     return "Friend request sent."
 
-def sb_list_friend_requests(kind: str) -> List[dict]:
+
+def sb_list_friend_requests(direction: str = "incoming") -> list[dict]:
     """
-    kind: 'incoming' or 'outgoing'
-    Returns rows with shape:
-      { id, status, requester: {user_id, username, display_name}, recipient: {...} }
+    List pending friend requests for the current user (incoming/outgoing).
+    Returns rows with joined profile info for convenience.
     """
     me = _me_id()
     if not me:
         return []
     url, headers = _sb_headers()
 
-    if kind == "incoming":
-        q = f"{url}/rest/v1/friend_requests?recipient_id=eq.{me}&select=id,status,requester_id,recipient_id"
+    base_params = {"status": "eq.pending", "select": "id,status,requester_id,recipient_id"}
+    if direction == "incoming":
+        base_params["recipient_id"] = f"eq.{me}"
     else:
-        q = f"{url}/rest/v1/friend_requests?requester_id=eq.{me}&select=id,status,requester_id,recipient_id"
+        base_params["requester_id"] = f"eq.{me}"
 
-    r = requests.get(q, headers=headers, timeout=20)
+    r = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=base_params, timeout=20)
     r.raise_for_status()
     rows = r.json()
 
     # enrich with usernames
-    ids = set()
-    for row in rows:
-        if row.get("requester_id"): ids.add(row["requester_id"])
-        if row.get("recipient_id"): ids.add(row["recipient_id"])
-    if not ids:
-        return []
+    def _profile(id_):
+        pr = requests.get(
+            f"{url}/rest/v1/profiles",
+            headers=headers,
+            params={"id": f"eq.{id_}", "select": "id,username,display_name", "limit": 1},
+            timeout=20,
+        )
+        pr.raise_for_status()
+        arr = pr.json()
+        return arr[0] if arr else {"id": id_, "username": "unknown", "display_name": ""}
 
-    in_clause = ",".join(ids)
-    p = requests.get(
-        f"{url}/rest/v1/profiles?user_id=in.({in_clause})&select=user_id,username,display_name",
-        headers=headers, timeout=20
+    for row in rows:
+        row["requester"] = _profile(row["requester_id"])
+        row["recipient"] = _profile(row["recipient_id"])
+    return rows
+
+def sb_respond_friend_request(req_id: str, accept: bool) -> str:
+    """Accept or reject a friend request (only the recipient can act)."""
+    me = _me_id()
+    if not me:
+        return "Please sign in first."
+    url, headers = _sb_headers()
+    # verify requester/recipient
+    getr = requests.get(
+        f"{url}/rest/v1/friend_requests",
+        headers=headers,
+        params={"id": f"eq.{req_id}", "select": "id,recipient_id,status"},
+        timeout=20,
     )
-    p.raise_for_status()
-    profiles = {x["user_id"]: x for x in p.json()}
+    getr.raise_for_status()
+    arr = getr.json()
+    if not arr:
+        return "Request not found."
+    row = arr[0]
+    if row["recipient_id"] != me:
+        return "Only the recipient can respond to this request."
+    if row.get("status") != "pending":
+        return "This request is not pending."
 
-    out = []
-    for row in rows:
-        out.append({
-            "id": row["id"],
-            "status": row.get("status", "pending"),
-            "requester": profiles.get(row.get("requester_id"), {"user_id": row.get("requester_id")}),
-            "recipient": profiles.get(row.get("recipient_id"), {"user_id": row.get("recipient_id")}),
-        })
-    return out
+    new_status = "accepted" if accept else "rejected"
+    upd = requests.patch(
+        f"{url}/rest/v1/friend_requests?id=eq.{quote_plus(req_id)}",
+        headers=headers,
+        json={"status": new_status},
+        timeout=20,
+    )
+    upd.raise_for_status()
+    return "Accepted." if accept else "Rejected."
 
-def sb_respond_friend_request(request_id: str, action: str) -> str:
+def sb_list_friends_with_profiles() -> list[dict]:
     """
-    action: 'accept' or 'decline'
-    On accept: mark request accepted and insert friendship both directions if not existing.
+    Return accepted friends (two-way) as profile dicts:
+      {id, username, display_name}
+    We treat a 'friend' as any row in friend_requests where status='accepted'
+    and either requester_id=me or recipient_id=me; the friend is the other side.
     """
     me = _me_id()
     if not me:
-        return "Please sign in."
+        return []
     url, headers = _sb_headers()
 
-    # Load the request
-    r = requests.get(
-        f"{url}/rest/v1/friend_requests?id=eq.{request_id}&select=id,requester_id,recipient_id,status",
-        headers=headers, timeout=20
-    )
+    # fetch accepted rows involving me
+    params = {
+        "or": f"(requester_id.eq.{me},recipient_id.eq.{me})",
+        "status": "eq.accepted",
+        "select": "id,requester_id,recipient_id,status",
+        "limit": 1000,
+    }
+    r = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=params, timeout=20)
     r.raise_for_status()
-    rows = r.json()
-    if not rows:
-        return "Request not found."
-    req = rows[0]
-    if req.get("status") != "pending":
-        return "This request is not pending anymore."
+    rels = r.json()
 
-    # Only recipient can accept/decline
-    if req.get("recipient_id") != me:
-        return "You can only act on requests sent to you."
+    friend_ids = []
+    for fr in rels:
+        other = fr["recipient_id"] if fr["requester_id"] == me else fr["requester_id"]
+        if other not in friend_ids:
+            friend_ids.append(other)
 
-    if action == "decline":
-        upd = requests.patch(
-            f"{url}/rest/v1/friend_requests?id=eq.{request_id}",
+    friends = []
+    for uid in friend_ids:
+        pr = requests.get(
+            f"{url}/rest/v1/profiles",
             headers=headers,
-            json={"status": "declined"},
-            timeout=20
+            params={"id": f"eq.{uid}", "select": "id,username,display_name", "limit": 1},
+            timeout=20,
         )
-        upd.raise_for_status()
-        return "Request declined."
-
-    # Accept
-    upd = requests.patch(
-        f"{url}/rest/v1/friend_requests?id=eq.{request_id}",
-        headers=headers,
-        json={"status": "accepted"},
-        timeout=20
-    )
-    upd.raise_for_status()
-
-    a = req["requester_id"]; b = req["recipient_id"]
-    # Insert symmetric friendship rows if missing
-    if not sb_is_already_friends(a, b):
-        requests.post(f"{url}/rest/v1/friends", headers=headers,
-                      json={"user_id": a, "friend_user_id": b}, timeout=20).raise_for_status()
-    if not sb_is_already_friends(b, a):
-        requests.post(f"{url}/rest/v1/friends", headers=headers,
-                      json={"user_id": b, "friend_user_id": a}, timeout=20).raise_for_status()
-
-    return "Request accepted. You’re now friends."
-
+        pr.raise_for_status()
+        arr = pr.json()
+        if arr:
+            friends.append(arr[0])
+    return friends
+    
 def sb_cancel_outgoing_request(request_id: str) -> str:
     """Allow requester to cancel a pending outgoing request."""
     me = _me_id()
