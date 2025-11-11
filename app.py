@@ -1917,131 +1917,155 @@ with st.sidebar:
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ===== Default: Home (Quick Study) =====
-# ... your Quick Study block here ...
+# ======================================================
+# QUICK STUDY (Home)
+# ======================================================
 
-# ---------- Quick Study: Subject / Exam / Topic ----------
-# keep a stable selection in session
-st.session_state.setdefault("qs_subject_id", None)
-st.session_state.setdefault("qs_exam_id", None)
-
-subjects = _roots(ALL_FOLDERS)
-subj_names = [s["name"] for s in subjects]
-subject_id = st.session_state.get("qs_subject_id")
-exam_id    = st.session_state.get("qs_exam_id")
-
-# ---- Subject ----
-st.markdown("### Subject")
-make_new_subject = st.checkbox(
-    "Create a new subject",
-    key="qs_make_new_subject",
-    value=(subject_id is None)
-)
-
-if make_new_subject:
-    new_subject = st.text_input(
-        "New subject name",
-        placeholder="e.g., A-Level Mathematics",
-        key="qs_new_subject"
-    )
-    if st.button("Save subject", key="qs_save_subject_btn"):
-        name = (new_subject or "").strip()
-        if not name:
-            st.warning("Enter a subject name.")
-        elif name.lower() in {n.lower() for n in subj_names}:
-            st.error("This subject already exists. Please use a different name.")
-        else:
-            created = create_folder(name, None)
-            # remember it and switch to 'use existing' path so Exam appears
-            st.session_state["qs_subject_id"] = created["id"]
-            st.session_state["qs_make_new_subject"] = False
-            # reset downstream selection
-            st.session_state["qs_exam_id"] = None
-            st.rerun()
-else:
-    # choose from existing
-    dropdown = ["— select —"] + subj_names
-    # try to preselect the current subject if set
-    pre_idx = 0
-    if subject_id:
-        current = next((s for s in subjects if s["id"] == subject_id), None)
-        if current:
-            try: pre_idx = 1 + subj_names.index(current["name"])
-            except ValueError: pre_idx = 0
-    subj_pick = st.selectbox("Use existing subject", dropdown, index=pre_idx, key="qs_subject_pick")
-    if subj_pick in subj_names:
-        chosen_id = next(s["id"] for s in subjects if s["name"] == subj_pick)
-        if chosen_id != st.session_state.get("qs_subject_id"):
-            st.session_state["qs_subject_id"] = chosen_id
-            st.session_state["qs_exam_id"] = None  # reset exam when subject changes
-            st.rerun()
-
-# always read the latest subject_id
-subject_id = st.session_state.get("qs_subject_id")
-
-# ---- Exam ----
-st.markdown("### Exam")
-if subject_id:
-    exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
-    exam_names = [e["name"] for e in exams]
-
-    make_new_exam = st.checkbox(
-        "Create a new exam",
-        key="qs_make_new_exam",
-        value=(st.session_state.get("qs_exam_id") is None)
-    )
-
-    if make_new_exam:
-        new_exam = st.text_input(
-            "New exam name",
-            placeholder="e.g., IGCSE May 2026",
-            key="qs_new_exam"
-        )
-        if st.button("Save exam", key="qs_save_exam_btn"):
-            name = (new_exam or "").strip()
-            if not name:
-                st.warning("Enter an exam name.")
-            elif name.lower() in {n.lower() for n in exam_names}:
-                st.error("This exam already exists under that subject.")
-            else:
-                created = create_folder(name, subject_id)
-                st.session_state["qs_exam_id"] = created["id"]
-                st.session_state["qs_make_new_exam"] = False
-                st.rerun()
+def _autosize_counts(text: str, detail: int, quiz_mode: str) -> tuple[int, int]:
+    """Heuristic: size outputs to input length + detail level."""
+    n_words = max(1, len(text.split()))
+    # buckets
+    if n_words < 800:
+        base_fc, base_q = 10, 6
+    elif n_words < 2500:
+        base_fc, base_q = 18, 10
+    elif n_words < 6000:
+        base_fc, base_q = 28, 14
     else:
-        # select existing exam
-        dropdown = ["— select —"] + exam_names
-        pre_idx = 0
-        if exam_id:
-            current = next((e for e in exams if e["id"] == exam_id), None)
-            if current:
-                try: pre_idx = 1 + exam_names.index(current["name"])
-                except ValueError: pre_idx = 0
-        ex_pick = st.selectbox("Use existing exam", dropdown, index=pre_idx, key="qs_exam_pick")
-        if ex_pick in exam_names:
-            chosen_eid = next(e["id"] for e in exams if e["name"] == ex_pick)
-            if chosen_eid != st.session_state.get("qs_exam_id"):
-                st.session_state["qs_exam_id"] = chosen_eid
-                st.rerun()
-else:
-    st.caption("Pick or create a Subject first to reveal Exams.")
+        base_fc, base_q = 40, 20
 
-# refresh the latest exam_id
-exam_id = st.session_state.get("qs_exam_id")
+    # detail influence (1..5) ~ +/- 30%
+    scale = 1.0 + (detail - 3) * 0.15
+    fc = int(round(base_fc * scale))
+    q  = int(round(base_q  * scale))
 
-# ---- Topic ----
-st.markdown("### Topic")
-if exam_id:
-    topic_name_input = st.text_input(
-        "New topic name",
-        placeholder="e.g., Differentiation",
-        key="qs_new_topic"
-    )
-else:
-    st.caption("Pick or create an Exam first to add a Topic.")
+    # MCQs need a few more to feel meaty
+    if quiz_mode == "Multiple choice":
+        q = int(round(q * 1.15))
 
+    # clamp
+    fc = max(8, min(fc, 60))
+    q  = max(6, min(q, 40))
+    return fc, q
+
+
+def render_quick_study_page():
+    st.title("⚡ Quick Study")
+
+    # Require sign-in (to save results under folders)
+    if "sb_user" not in st.session_state:
+        st.info("Please sign in to create and save study materials.")
+        return
+
+    # ---------- Bootstrap state (consume “just created” IDs BEFORE widgets) ----------
+    st.session_state.setdefault("qs_subject_id", None)
+    st.session_state.setdefault("qs_exam_id", None)
+
+    if "__qs_new_subject_id" in st.session_state:
+        st.session_state["qs_subject_id"] = st.session_state.pop("__qs_new_subject_id")
+        # Clear the “create new” checkbox so it doesn't stick
+        if "qs_make_new_subject" in st.session_state:
+            del st.session_state["qs_make_new_subject"]
+        # Reset downstream
+        st.session_state["qs_exam_id"] = None
+
+    if "__qs_new_exam_id" in st.session_state:
+        st.session_state["qs_exam_id"] = st.session_state.pop("__qs_new_exam_id")
+        if "qs_make_new_exam" in st.session_state:
+            del st.session_state["qs_make_new_exam"]
+
+    # Refresh folders (subjects/exams) for pickers
+    try:
+        ALL_FOLDERS_LOCAL = list_folders()
+    except Exception:
+        ALL_FOLDERS_LOCAL = []
+        st.warning("Could not load folders.")
+
+    def _roots(rows):  # subjects
+        return [r for r in rows if not r.get("parent_id")]
+
+    subjects = _roots(ALL_FOLDERS_LOCAL)
+    subj_names = [s["name"] for s in subjects]
+    subj_by_id = {s["id"]: s for s in subjects}
+
+    # ---------- SUBJECT ----------
+    st.markdown("### Subject")
+    make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
+
+    subject_id = st.session_state.get("qs_subject_id")
+    if make_new_subject:
+        new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
+        if st.button("Save subject", key="qs_save_subject_btn"):
+            name = (new_subject or "").strip()
+            if not name:
+                st.warning("Enter a subject name.")
+            elif name.lower() in {n.lower() for n in subj_names}:
+                st.error("This subject already exists. Please use a different name.")
+            else:
+                try:
+                    created = create_folder(name, None)
+                    # Stash new subject -> select on next run
+                    st.session_state["__qs_new_subject_id"] = created["id"]
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+    else:
+        # Existing subject picker
+        label = "— select —"
+        if subject_id and subject_id in subj_by_id:
+            label = subj_by_id[subject_id]["name"]
+        pick = st.selectbox("Use existing subject", ["— select —"] + subj_names, index=0, key="qs_subject_pick")
+        if pick in subj_names:
+            st.session_state["qs_subject_id"] = next(s["id"] for s in subjects if s["name"] == pick)
+            subject_id = st.session_state["qs_subject_id"]
+
+    # ---------- EXAM ----------
+    st.markdown("### Exam")
+    exam_id = st.session_state.get("qs_exam_id")
+    exams = []
+    if subject_id:
+        exams = [f for f in ALL_FOLDERS_LOCAL if f.get("parent_id") == subject_id]
+        exam_names = [e["name"] for e in exams]
+        make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
+
+        if make_new_exam:
+            new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
+            if st.button("Save exam", key="qs_save_exam_btn"):
+                name = (new_exam or "").strip()
+                if not name:
+                    st.warning("Enter an exam name.")
+                elif name.lower() in {n.lower() for n in exam_names}:
+                    st.error("This exam already exists under that subject.")
+                else:
+                    try:
+                        created = create_folder(name, subject_id)
+                        st.session_state["__qs_new_exam_id"] = created["id"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+        else:
+            # existing exam picker
+            label = "— select —"
+            if exam_id and any(e["id"] == exam_id for e in exams):
+                label = next(e["name"] for e in exams if e["id"] == exam_id)
+            pick = st.selectbox("Use existing exam", ["— select —"] + exam_names, index=0, key="qs_exam_pick")
+            if pick in exam_names:
+                st.session_state["qs_exam_id"] = next(e["id"] for e in exams if e["name"] == pick)
+                exam_id = st.session_state["qs_exam_id"]
+    else:
+        st.caption("Pick or create a Subject first to reveal Exams.")
+
+    # ---------- TOPIC ----------
+    st.markdown("### Topic")
+    topic_name = ""
+    if exam_id:
+        topic_name = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
+    else:
+        st.caption("Pick or create an Exam first to add a Topic.")
 
     st.markdown("---")
+
+    # ---------- EXTRA CONTEXT ----------
     st.markdown("**Subject (free text, improves accuracy & quality):**")
     subject_hint = st.text_input(
         "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
@@ -2079,105 +2103,50 @@ else:
         key="qs_files",
     )
 
-    def _autosize_counts(raw_text: str, detail: int, mode: str) -> tuple[int, int]:
-        """
-        Decide (flashcards, questions) based on input size and desired detail.
-        Uses words as a proxy for content. Caps for practicality.
-        """
-        w = max(0, len((raw_text or "").split()))
-        # Baseline buckets (tune as you like)
-        if w < 600:
-            fc_min, fc_max = 8, 14
-            q_min, q_max = 4, 6
-        elif w < 1500:
-            fc_min, fc_max = 15, 24
-            q_min, q_max = 7, 10
-        elif w < 4000:
-            fc_min, fc_max = 25, 40
-            q_min, q_max = 11, 16
-        elif w < 9000:
-            fc_min, fc_max = 41, 60
-            q_min, q_max = 17, 22
-        else:
-            fc_min, fc_max = 61, 80
-            q_min, q_max = 23, 28
-    
-        # Nudge by detail slider (1..5): +/- ~20% span
-        factor = 1 + (detail - 3) * 0.1  # 0.8 .. 1.2
-        import math, random
-        fc = int(math.ceil(fc_min * factor))
-        q  = int(math.ceil(q_min * factor))
-    
-        # If MCQ, slightly raise count (they’re faster to answer)
-        if mode.lower().startswith("multiple"):
-            q = int(q * 1.15)
-    
-        # Bound within bucket
-        fc = min(max(fc, fc_min), fc_max)
-        q  = min(max(q, q_min),  q_max)
-    
-        # Global caps
-        fc = min(fc, 80)
-        q  = min(q, 28)
-        return fc, q
-
-
-    # --- What to generate ---
+    # ---------- What to generate ----------
     st.markdown("### What to generate")
     sel_notes = st.checkbox("📄 Notes", value=True, key="qs_sel_notes")
     sel_flash = st.checkbox("🧠 Flashcards", value=True, key="qs_sel_flash")
     sel_quiz  = st.checkbox("🧪 Quiz", value=True, key="qs_sel_quiz")
 
-    # ---- Gate the generate button ----
-    has_subject = bool(subject_id or st.session_state.get("qs_new_subject"))
-    has_exam = bool(exam_id or st.session_state.get("qs_new_exam"))
+    # ---------- Gate Generate button ----------
     has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
     has_files = bool(files)
     has_selection = sel_notes or sel_flash or sel_quiz
+    can_generate = bool(subject_id and exam_id and has_topic_text and has_files and has_selection)
 
-    can_generate = (
-        (subject_id is not None)
-        and (exam_id is not None)
-        and has_topic_text
-        and has_files
-        and has_selection
-    )
-
-    gen_clicked = st.button(
-        "Generate",
-        type="primary",
-        key="qs_generate_btn",
-        disabled=not can_generate
-    )
+    gen_clicked = st.button("Generate", type="primary", key="qs_generate_btn", disabled=not can_generate)
 
     if gen_clicked and can_generate:
-        subjects = _roots(list_folders())
-        subj_map = {s["name"]: s["id"] for s in subjects}
-        subject_id = subject_id or subj_map.get(st.session_state.get("qs_subject_pick"))
-    
-        exams = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
-        exam_map = {e["name"]: e["id"] for e in exams}
-        exam_id = exam_id or exam_map.get(st.session_state.get("qs_exam_pick"))
-    
+        # Resolve subject/exam from current selections
+        subjects_now = _roots(list_folders())
+        subj_map_now = {s["name"]: s["id"] for s in subjects_now}
+        subject_id = subject_id or subj_map_now.get(st.session_state.get("qs_subject_pick"))
+
+        exams_now = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
+        exam_map_now = {e["name"]: e["id"] for e in exams_now}
+        exam_id = exam_id or exam_map_now.get(st.session_state.get("qs_exam_pick"))
+
+        # Create the topic folder (prevent duplicate name under exam)
         topic_id = None
-        topic_name = (st.session_state.get("qs_new_topic") or "").strip()
-        if exam_id and topic_name:
+        topic_name_in = (st.session_state.get("qs_new_topic") or "").strip()
+        if exam_id and topic_name_in:
             existing_topics = [f for f in list_folders() if f.get("parent_id") == exam_id]
-            if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
+            if topic_name_in.lower() in {t["name"].lower() for t in existing_topics}:
                 st.error("Topic already exists under this exam. Please choose a different name.")
                 st.stop()
-            created = create_folder(topic_name, exam_id)
+            created = create_folder(topic_name_in, exam_id)
             topic_id = created["id"]
-            topic_name = created["name"]
-    
+            topic_name_in = created["name"]
+
         dest_folder = topic_id or exam_id or subject_id or None
         base_title = (
-            topic_name
-            or (next((e["name"] for e in exams if e["id"] == exam_id), None) if exam_id else None)
-            or (next((s["name"] for s in subjects if s["id"] == subject_id), None) if subject_id else None)
+            topic_name_in
+            or (next((e["name"] for e in exams_now if e["id"] == exam_id), None) if exam_id else None)
+            or (next((s["name"] for s in subjects_now if s["id"] == subject_id), None) if subject_id else None)
             or (subject_hint or "Study Pack")
         )
-    
+
         prog = st.progress(0, text="Starting…")
         try:
             prog.progress(10, text="Extracting text…")
@@ -2185,25 +2154,23 @@ else:
             if not text.strip():
                 st.error("No text detected in the uploaded files.")
                 st.stop()
-    
-            # Decide sizes automatically from text length + detail + quiz mode
+
+            # Decide sizes automatically
             auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
-    
-            prog.progress(35, text=f"Summarising with AI…")
+
+            prog.progress(35, text="Summarising with AI…")
             data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-    
+
             summary_id = flash_id = quiz_id = None
-    
+
             if sel_flash:
                 prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
                 try:
-                    cards = generate_flashcards_from_notes(
-                        data, audience=audience, target_count=auto_fc
-                    )
+                    cards = generate_flashcards_from_notes(data, audience=audience, target_count=auto_fc)
                 except Exception as e:
                     st.warning(f"Flashcards skipped: {e}")
                     cards = []
-    
+
             if sel_quiz:
                 prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
                 qs = generate_quiz_from_notes(
@@ -2216,7 +2183,6 @@ else:
                 )
             else:
                 qs = None
-    
 
             prog.progress(85, text="Saving selected items…")
 
@@ -2249,7 +2215,7 @@ else:
         except Exception as e:
             st.error(f"Generation failed: {e}")
 
-    # --- Show 'Open' buttons if something was created ---
+    # ---------- Show “Open” buttons if something was created ----------
     sid = st.session_state.get("qs_created_summary_id")
     fid = st.session_state.get("qs_created_flash_id")
     qid = st.session_state.get("qs_created_quiz_id")
@@ -2258,11 +2224,15 @@ else:
         st.markdown("### Open")
         c1, c2, c3 = st.columns(3)
         if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
-            _set_params(item=sid, view="all")
-            st.rerun()
+            _set_params(item=sid, view="all"); st.rerun()
         if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
-            _set_params(item=fid, view="all")
-            st.rerun()
+            _set_params(item=fid, view="all"); st.rerun()
         if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-            _set_params(item=qid, view="all")
-            st.rerun()
+            _set_params(item=qid, view="all"); st.rerun()
+
+
+# ---- Call it when on Home / default ----
+if view_param in ("", "home", None):
+    render_quick_study_page()
+    st.stop()
+
