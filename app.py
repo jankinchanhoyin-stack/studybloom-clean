@@ -1920,71 +1920,126 @@ with st.sidebar:
 # ===== Default: Home (Quick Study) =====
 # ... your Quick Study block here ...
 
-# ======================================================
-# DEFAULT: HOME (Quick Study)
-# ======================================================
-st.title("⚡ Quick Study")
+# ---------- Quick Study: Subject / Exam / Topic ----------
+# keep a stable selection in session
+st.session_state.setdefault("qs_subject_id", None)
+st.session_state.setdefault("qs_exam_id", None)
 
-if "sb_user" not in st.session_state:
-    st.info("Log in to save your study materials.")
+subjects = _roots(ALL_FOLDERS)
+subj_names = [s["name"] for s in subjects]
+subject_id = st.session_state.get("qs_subject_id")
+exam_id    = st.session_state.get("qs_exam_id")
+
+# ---- Subject ----
+st.markdown("### Subject")
+make_new_subject = st.checkbox(
+    "Create a new subject",
+    key="qs_make_new_subject",
+    value=(subject_id is None)
+)
+
+if make_new_subject:
+    new_subject = st.text_input(
+        "New subject name",
+        placeholder="e.g., A-Level Mathematics",
+        key="qs_new_subject"
+    )
+    if st.button("Save subject", key="qs_save_subject_btn"):
+        name = (new_subject or "").strip()
+        if not name:
+            st.warning("Enter a subject name.")
+        elif name.lower() in {n.lower() for n in subj_names}:
+            st.error("This subject already exists. Please use a different name.")
+        else:
+            created = create_folder(name, None)
+            # remember it and switch to 'use existing' path so Exam appears
+            st.session_state["qs_subject_id"] = created["id"]
+            st.session_state["qs_make_new_subject"] = False
+            # reset downstream selection
+            st.session_state["qs_exam_id"] = None
+            st.rerun()
 else:
-    subjects = _roots(ALL_FOLDERS)
-    subj_names = [s["name"] for s in subjects]
+    # choose from existing
+    dropdown = ["— select —"] + subj_names
+    # try to preselect the current subject if set
+    pre_idx = 0
+    if subject_id:
+        current = next((s for s in subjects if s["id"] == subject_id), None)
+        if current:
+            try: pre_idx = 1 + subj_names.index(current["name"])
+            except ValueError: pre_idx = 0
+    subj_pick = st.selectbox("Use existing subject", dropdown, index=pre_idx, key="qs_subject_pick")
+    if subj_pick in subj_names:
+        chosen_id = next(s["id"] for s in subjects if s["name"] == subj_pick)
+        if chosen_id != st.session_state.get("qs_subject_id"):
+            st.session_state["qs_subject_id"] = chosen_id
+            st.session_state["qs_exam_id"] = None  # reset exam when subject changes
+            st.rerun()
 
-    # ---- Subject ----
-    st.markdown("### Subject")
-    make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
-    subject_id = None
-    if make_new_subject:
-        new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
-        if st.button("Save subject", key="qs_save_subject_btn"):
-            name = (new_subject or "").strip()
+# always read the latest subject_id
+subject_id = st.session_state.get("qs_subject_id")
+
+# ---- Exam ----
+st.markdown("### Exam")
+if subject_id:
+    exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
+    exam_names = [e["name"] for e in exams]
+
+    make_new_exam = st.checkbox(
+        "Create a new exam",
+        key="qs_make_new_exam",
+        value=(st.session_state.get("qs_exam_id") is None)
+    )
+
+    if make_new_exam:
+        new_exam = st.text_input(
+            "New exam name",
+            placeholder="e.g., IGCSE May 2026",
+            key="qs_new_exam"
+        )
+        if st.button("Save exam", key="qs_save_exam_btn"):
+            name = (new_exam or "").strip()
             if not name:
-                st.warning("Enter a subject name.")
-            elif name.lower() in {n.lower() for n in subj_names}:
-                st.error("This subject already exists. Please use a different name.")
+                st.warning("Enter an exam name.")
+            elif name.lower() in {n.lower() for n in exam_names}:
+                st.error("This exam already exists under that subject.")
             else:
-                create_folder(name, None)
-                st.success("Subject created.")
+                created = create_folder(name, subject_id)
+                st.session_state["qs_exam_id"] = created["id"]
+                st.session_state["qs_make_new_exam"] = False
                 st.rerun()
     else:
-        subj_pick = st.selectbox("Use existing subject", ["— select —"] + subj_names, key="qs_subject_pick")
-        if subj_pick in subj_names:
-            subject_id = next(s["id"] for s in subjects if s["name"] == subj_pick)
+        # select existing exam
+        dropdown = ["— select —"] + exam_names
+        pre_idx = 0
+        if exam_id:
+            current = next((e for e in exams if e["id"] == exam_id), None)
+            if current:
+                try: pre_idx = 1 + exam_names.index(current["name"])
+                except ValueError: pre_idx = 0
+        ex_pick = st.selectbox("Use existing exam", dropdown, index=pre_idx, key="qs_exam_pick")
+        if ex_pick in exam_names:
+            chosen_eid = next(e["id"] for e in exams if e["name"] == ex_pick)
+            if chosen_eid != st.session_state.get("qs_exam_id"):
+                st.session_state["qs_exam_id"] = chosen_eid
+                st.rerun()
+else:
+    st.caption("Pick or create a Subject first to reveal Exams.")
 
-    # ---- Exam ----
-    st.markdown("### Exam")
-    exam_id = None
-    if subject_id:
-        exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
-        exam_names = [e["name"] for e in exams]
-        make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
-        if make_new_exam:
-            new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
-            if st.button("Save exam", key="qs_save_exam_btn"):
-                name = (new_exam or "").strip()
-                if not name:
-                    st.warning("Enter an exam name.")
-                elif name.lower() in {n.lower() for n in exam_names}:
-                    st.error("This exam already exists under that subject.")
-                else:
-                    create_folder(name, subject_id)
-                    st.success("Exam created.")
-                    st.rerun()
-        else:
-            ex_pick = st.selectbox("Use existing exam", ["— select —"] + exam_names, key="qs_exam_pick")
-            if ex_pick in exam_names:
-                exam_id = next(e["id"] for e in exams if e["name"] == ex_pick)
-    else:
-        st.caption("Pick or create a Subject first to reveal Exams.")
+# refresh the latest exam_id
+exam_id = st.session_state.get("qs_exam_id")
 
-    # ---- Topic ----
-    st.markdown("### Topic")
-    topic_name_input = ""
-    if exam_id:
-        topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
-    else:
-        st.caption("Pick or create an Exam first to add a Topic.")
+# ---- Topic ----
+st.markdown("### Topic")
+if exam_id:
+    topic_name_input = st.text_input(
+        "New topic name",
+        placeholder="e.g., Differentiation",
+        key="qs_new_topic"
+    )
+else:
+    st.caption("Pick or create an Exam first to add a Topic.")
+
 
     st.markdown("---")
     st.markdown("**Subject (free text, improves accuracy & quality):**")
