@@ -533,14 +533,15 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                 st.success(f"Attempt saved: {correct}/{total}")
             except Exception:
                 st.info("Attempt not saved (check quiz_attempts table).")
+    import time  # put at top of file if you prefer
+    
     if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
-        # Determine generation settings from current quiz
         try:
             quiz_item = get_item(item_id)
             folder_id = quiz_item.get("folder_id")
             subject = subject_hint or "General"
     
-            # Try to respect the existing quiz mode/options if present
+            # Respect current quiz mode/options if present
             cur_data = (quiz_item.get("data") or {})
             mode = "mcq" if (cur_data.get("type") == "mcq") else "free"
             mcq_options = cur_data.get("mcq_options", 4)
@@ -559,12 +560,14 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                     prog.empty()
                     st.info("No summary found in this folder to generate from.")
                 else:
-                    # Generate new questions
+                    # Generate new questions (fresh each time)
                     prog.progress(55, text="Generating fresh questions with AI…")
                     try:
+                        # Tiny randomness nudge via subject suffix to avoid identical generations
+                        rand_tag = str(int(time.time() * 1000))[-6:]
                         new_qs = generate_quiz_from_notes(
                             summary["data"],
-                            subject=subject,
+                            subject=f"{subject} [v{rand_tag}]",
                             audience="high school",
                             num_questions=8,
                             mode=mode,
@@ -575,6 +578,12 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                         st.error(f"Question generation failed: {e}")
                         st.stop()
     
+                    # Unique title to avoid upsert collisions
+                    # If your notes were titled "📄 X — Notes", we turn it into "X — Quiz (YYYY-MM-DD HH:MM:SS)"
+                    base_title = summary.get("title", "Study Pack").replace("— Notes", "").replace("📄", "").strip()
+                    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                    new_quiz_title = f"{base_title} — Quiz ({ts})"
+    
                     # Save the new quiz
                     prog.progress(85, text="Saving new quiz…")
                     payload = {"questions": new_qs}
@@ -582,16 +591,30 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
                         payload["type"] = "mcq"
                         payload["mcq_options"] = mcq_options
     
-                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", payload, folder_id)
+                    created = save_item("quiz", new_quiz_title, payload, folder_id)
+                    new_id = (created or {}).get("id")
+    
+                    # Fallback: if no id returned, open newest quiz in this folder
+                    if not new_id:
+                        try:
+                            latest = [it for it in list_items(folder_id, limit=50) if it.get("kind") == "quiz"]
+                            latest.sort(key=lambda it: it.get("created_at", ""), reverse=True)
+                            new_id = latest[0]["id"] if latest else None
+                        except Exception:
+                            new_id = None
     
                     prog.progress(100, text="Done!")
-                    st.success("New quiz created.")
-                    _set_params(item=created.get("id"), view="all")
-                    st.rerun()
+                    if new_id:
+                        st.success("New quiz created.")
+                        _set_params(item=new_id, view="all")
+                        st.rerun()
+                    else:
+                        st.warning("Saved, but couldn’t locate the new quiz automatically. Check All Resources.")
     
         except Exception as e:
             st.error(f"Re-generate failed: {e}")
 
+    
 
 # ---------------- Load folders ----------------
 if "sb_user" in st.session_state:
