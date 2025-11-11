@@ -1784,7 +1784,7 @@ def render_quick_study_page():
 def render_resources_page():
     # ← Home (top-left)
     bcol, _ = st.columns([1, 9])
-    if bcol.button("← Home", f"nav_home"):
+    if bcol.button("← Home", key="res_back_home"):
         _go_home()
 
     st.markdown("## 🧭 Resources — Folder Explorer")
