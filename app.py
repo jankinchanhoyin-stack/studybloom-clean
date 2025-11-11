@@ -200,10 +200,6 @@ def _maybe_open_requested_dialog():
 
 _maybe_open_requested_dialog()
 
-if c2.button("Have an account? Sign in", key="dlg_to_login"):
-    st.session_state["want_dialog"] = "login"
-    st.rerun()
-
 
 # ---------------- Query helpers ----------------
 def _get_params() -> Dict[str, str]:
