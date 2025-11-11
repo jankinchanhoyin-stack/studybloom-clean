@@ -288,6 +288,117 @@ def list_flash_reviews_for_items(item_ids: List[str]) -> List[Dict]:
     r.raise_for_status()
     return r.json()
 
+def _current_user_id() -> Optional[str]:
+    try:
+        return st.session_state["sb_user"]["user"]["id"]
+    except Exception:
+        return None
+
+def _iso_start_of_today_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    return start.isoformat()
+
+def _iso_start_of_tomorrow_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)
+    return start.isoformat()
+
+def _iso_start_of_month_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    return start.isoformat()
+
+def _iso_start_of_next_month_utc() -> str:
+    now = datetime.now(timezone.utc)
+    month = now.month + 1
+    year = now.year + (1 if month == 13 else 0)
+    month = 1 if month == 13 else month
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    return start.isoformat()
+
+def sb_find_profile_by_username(username: str) -> Optional[dict]:
+    if not username:
+        return None
+    url, headers = _sb_headers()
+    r = requests.get(
+        f"{url}/rest/v1/profiles?username=eq.{requests.utils.quote(username)}&select=id,username",
+        headers=headers,
+        timeout=20,
+    )
+    if r.status_code == 200 and r.json():
+        return r.json()[0]
+    return None
+
+def sb_add_friend(friend_username: str) -> tuple[bool, str]:
+    me = _current_user_id()
+    if not me:
+        return False, "Please sign in first."
+
+    prof = sb_find_profile_by_username((friend_username or "").strip())
+    if not prof:
+        return False, "No user found with that username."
+
+    if prof["id"] == me:
+        return False, "You can’t add yourself."
+
+    url, headers = _sb_headers()
+    payload = {"user_id": me, "friend_user_id": prof["id"]}
+    r = requests.post(f"{url}/rest/v1/friends", headers=headers, json=payload, timeout=20)
+    if r.status_code in (200, 201):
+        return True, f"Added {prof['username']}."
+    elif r.status_code == 409:
+        return False, "Already added."
+    else:
+        try:
+            msg = r.json()
+        except Exception:
+            msg = r.text
+        return False, f"Could not add friend: {msg}"
+
+def sb_list_friends_with_profiles() -> list[dict]:
+    me = _current_user_id()
+    if not me:
+        return []
+    url, headers = _sb_headers()
+    r = requests.get(f"{url}/rest/v1/friends?user_id=eq.{me}&select=friend_user_id", headers=headers, timeout=20)
+    if r.status_code != 200:
+        return []
+    ids = [row["friend_user_id"] for row in r.json() if row.get("friend_user_id")]
+    if not ids:
+        return []
+    ids_csv = ",".join(ids)
+    r2 = requests.get(
+        f"{url}/rest/v1/profiles?id=in.({ids_csv})&select=id,username",
+        headers=headers,
+        timeout=20,
+    )
+    if r2.status_code != 200:
+        return []
+    return r2.json()
+
+def sb_sum_xp_for_window(user_id: str, start_iso: str, end_iso: str) -> int:
+    url, headers = _sb_headers()
+    q = (
+        f"{url}/rest/v1/xp_events"
+        f"?user_id=eq.{user_id}"
+        f"&occurred_at=gte.{start_iso}"
+        f"&occurred_at=lt.{end_iso}"
+        f"&select=xp"
+    )
+    r = requests.get(q, headers=headers, timeout=25)
+    if r.status_code != 200:
+        return 0
+    try:
+        return int(sum(int(row.get("xp") or 0) for row in r.json()))
+    except Exception:
+        return 0
+
+def sb_get_xp_totals_for_user(user_id: str) -> dict:
+    today = sb_sum_xp_for_window(user_id, _iso_start_of_today_utc(), _iso_start_of_tomorrow_utc())
+    month = sb_sum_xp_for_window(user_id, _iso_start_of_month_utc(), _iso_start_of_next_month_utc())
+    return {"today": today, "month": month}
+
 
 
 
