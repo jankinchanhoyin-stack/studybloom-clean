@@ -1058,67 +1058,91 @@ elif view_param == "all":
 # Thin Icon Sidebar + Router
 # ===========================
 
-# ----------------- Rectangular sidebar buttons (icon left, text right) -----------------
 # ----------------- Slim, uniform rectangular sidebar -----------------
-# ---------- MUST be at very top of app.py (only once) ----------
-# import streamlit as st
-# st.set_page_config(page_title="StudyBloom", page_icon="📚", initial_sidebar_state="expanded")
-
-# ===== Sidebar (render FIRST, before any st.stop) =====
 st.markdown("""
 <style>
-/* remove any older rail effects */
-[data-testid="stSidebarNav"] { display: block !important; }
-.block-container { padding-left: 1rem; }  /* undo old left padding if any */
-
-/* hide collapse chevron so users don't hide the bar */
 [data-testid="collapsedControl"] { display: none !important; }
 
-/* slim, uniform rectangular buttons */
-section[data-testid="stSidebar"] { width: 170px !important; min-width: 170px !important; }
-section[data-testid="stSidebar"] .block-container { padding: 12px 10px; }
+/* make sidebar narrower overall */
+section[data-testid="stSidebar"] {
+  width: 170px !important;           /* adjust sidebar width */
+  min-width: 170px !important;
+}
 
-.nav-stack { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+/* inner padding */
+section[data-testid="stSidebar"] .block-container {
+  padding: 12px 10px 12px 10px;
+}
+
+/* vertical stack of rows */
+.nav-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  align-items: stretch;
+}
+
+/* each nav row same rectangular button size */
 .nav-row { width: 100%; }
 .nav-row .stButton > button {
-  width: 100% !important; height: 44px !important;
-  display: flex !important; align-items: center !important; justify-content: flex-start !important;
-  gap: 10px !important; padding: 6px 10px !important;
-  border-radius: 10px !important; font-size: 15px !important; line-height: 1 !important; font-weight: 500 !important;
+  width: 100% !important;
+  height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  padding: 6px 10px !important;
+  border-radius: 10px !important;
+  font-size: 15px !important;
+  line-height: 1 !important;
+  font-weight: 500 !important;
 }
-.nav-row .stButton > button span { font-size: 18px !important; }
-.nav-row.active .stButton > button { border: 2px solid #f87171 !important; background: rgba(248,113,113,0.12) !important; }
-.nav-row .stButton > button:hover { background: rgba(255,255,255,0.07) !important; }
+
+/* icon text styling */
+.nav-row .stButton > button span {
+  font-size: 18px !important;
+}
+
+/* active & hover states */
+.nav-row.active .stButton > button {
+  border: 2px solid #f87171 !important;
+  background-color: rgba(248,113,113,0.12) !important;
+}
+.nav-row .stButton > button:hover {
+  background-color: rgba(255,255,255,0.07) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-def _nav_row(icon: str, label: str, target_view: str | None, key: str, active: bool=False):
+
+def _nav_row(icon: str, label: str, target_view: str|None, key: str, active: bool=False):
     cls = "nav-row active" if active else "nav-row"
     st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
     if st.button(f"{icon}  {label}", key=key):
-        _set_params(view=target_view)
-        st.rerun()
+        _set_params(view=target_view); st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Current view
+
+# current view
 _v = _get_params().get("view")
 view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
-# Render sidebar NOW (so it appears on every page)
+# sidebar (always visible)
 with st.sidebar:
     st.markdown("<div class='nav-stack'>", unsafe_allow_html=True)
-    _nav_row("🏠", "Home", None,          key="nav_home", active=(view_param == ""))
-    _nav_row("🧭", "Resources", "resources", key="nav_res",  active=(view_param == "resources"))
-    _nav_row("🗂️", "All",   "all",        key="nav_all",  active=(view_param == "all"))
+    _nav_row("🏠", "Home", None, key="nav_home", active=(view_param==""))
+    _nav_row("🧭", "Resources", "resources", key="nav_res", active=(view_param=="resources"))
+    _nav_row("🗂️", "All", "all", key="nav_all", active=(view_param=="all"))
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ===== Router (AFTER sidebar; safe to st.stop here) =====
+
+# ------------ Router (unchanged) ------------
 if view_param == "resources":
-    render_resources_page()
-    st.stop()
+    render_resources_page(); st.stop()
 elif view_param == "all":
-    render_all_resources_page()
-    st.stop()
+    render_all_resources_page(); st.stop()
+# else: default Quick Study view continues
 
 # ===== Default: Home (Quick Study) =====
 # ... your Quick Study block here ...
