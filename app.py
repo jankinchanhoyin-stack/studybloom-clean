@@ -36,6 +36,19 @@ from auth_rest import (
 
 st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
 
+
+# ---------- Dialog capability ----------
+HAS_DIALOG = hasattr(st, "experimental_dialog")
+if HAS_DIALOG:
+    st_dialog = st.experimental_dialog
+else:
+    st_dialog = None
+# ---------- Auto-prompt login on entry ----------
+if ("sb_user" not in st.session_state) and (not st.session_state.get("auth_prompted")) and (st_dialog is not None):
+    st.session_state["auth_prompted"] = True
+    login_dialog()
+
+
 # ---------- Top bar ----------
 def _topbar():
     left, right = st.columns([6, 4])
@@ -45,9 +58,17 @@ def _topbar():
         if "sb_user" not in st.session_state:
             c1, c2 = st.columns([1,1])
             if c1.button("Log in", key="top_login"):
-                login_dialog() if st_dialog else None
+                if st_dialog is not None:
+                    login_dialog()
+                else:
+                    st.warning("Pop-up dialog not supported here. (You can still add an /auth page if you want.)")
+            
             if c2.button("Sign up", key="top_signup"):
-                signup_dialog() if st_dialog else None
+                if st_dialog is not None:
+                    signup_dialog()
+                else:
+                    st.warning("Pop-up dialog not supported here. (You can still add an /auth page if you want.)")
+
         else:
             user_email = st.session_state["sb_user"]["user"].get("email","account")
             disp = st.session_state["sb_user"]["user"].get("user_metadata",{}).get("display_name") or ""
