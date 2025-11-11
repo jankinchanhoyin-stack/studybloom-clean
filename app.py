@@ -1342,7 +1342,7 @@ if "item" in params and "sb_user" in st.session_state:
             st.write(data or full)
     except Exception as e:
         st.error(f"Could not load item: {e}")
-        if st.button("← Back to Resources", key="item_back_btn"):
+        if st.button("← Back to Resources", key="item_back_btn1"):
             _set_params(view="all")
             st.rerun()
     st.stop()
@@ -2021,7 +2021,7 @@ def render_resources_page():
 def render_all_resources_page():
     # --------- Header / Back ---------
     top_l, _ = st.columns([1, 9])
-    if top_l.button("← Home", key="all_back_home"):
+    if top_l.button("← Home", key="all_back_home1"):
         _go_home()
 
     st.markdown("## 🗂️ All Resources (Newest)")
