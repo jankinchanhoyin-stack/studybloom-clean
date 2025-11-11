@@ -1006,26 +1006,6 @@ if is_account:
     monthly_ratio = min(1.0, xp_month / max(1, MONTHLY_XP_GOAL))
     
     # --- CSS tweaks ---
-    st.markdown("""
-    <style>
-    /* Keep one clean blue bar with subtle transparent background */
-    .stProgress > div[data-testid="stProgressBar"] {
-        background-color: transparent !important;
-    }
-    .stProgress > div[data-testid="stProgressBar"] > div {
-        background-color: #2563eb !important; /* blue fill */
-        border-radius: 10px !important;
-    }
-    /* Keep XP containers clean and subtle */
-    .xp-box {
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: .8rem .9rem;
-        background: rgba(255,255,255,0.03);
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
     
     # --- Layout ---
     with st.container():
