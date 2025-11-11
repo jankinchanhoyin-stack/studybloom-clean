@@ -116,6 +116,19 @@ def rename_folder(folder_id: str, new_name: str) -> dict:
                           json={"name": new_name}, headers=headers, timeout=20)
     resp.raise_for_status(); data = resp.json()
     return data[0] if isinstance(data, list) and data else {}
+def move_folder_parent(folder_id: str, new_parent_id: Optional[str]) -> dict:
+    """Move a folder to a new parent (subjects have parent_id=None)."""
+    url, headers = _sb_headers()
+    payload = {"parent_id": new_parent_id}  # can be None for a root Subject
+    resp = requests.patch(
+        f"{url}/rest/v1/folders?id=eq.{folder_id}",
+        json=payload,
+        headers=headers,
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data[0] if isinstance(data, list) and data else {}
 
 # ---------- Dialog capability ----------
 HAS_DIALOG = hasattr(st, "experimental_dialog")
@@ -672,177 +685,210 @@ def render_resources_page():
     # ← Home (top-left)
     bcol, _ = st.columns([1, 9])
     if bcol.button("← Home", key="res_back_home"):
-        _set_params(view=None)  # clears to home/Quick Study
+        _set_params(view=None)
         st.rerun()
 
-    st.title("🧰 Resources")
+    st.markdown("## 🧭 Resources — Folder Explorer")
+
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
         return
 
+    # ---------- load data ----------
     try:
         ALL_FOLDERS = list_folders()
-    except:
-        pass
+    except Exception:
+        ALL_FOLDERS = []
+    try:
+        ALL_ITEMS = list_items(None, limit=2000)
+    except Exception:
+        ALL_ITEMS = []
 
-    # ---- SUBJECT row (inline actions) ----
-    subjects = [r for r in ALL_FOLDERS if not r.get("parent_id")]
-    subj_names = [s["name"] for s in subjects]
-    csubj1, csubj2, csubj3 = st.columns([3, 0.9, 0.9])
-    subj_pick = csubj1.selectbox("Subject", ["— select —"] + subj_names, key="res_subj_pick")
-    subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
+    # ---------- utils ----------
+    def roots(rows): return [r for r in rows if not r.get("parent_id")]                # Subjects
+    def children(rows, pid): return [r for r in rows if r.get("parent_id") == pid]     # Exams/Topics
 
-    if subj_id:
-        if csubj2.button("Rename", key="rn_subj_btn", use_container_width=True):
-            st.session_state["rn_subj_mode"] = True
-        if csubj3.button("Delete", key="del_subj_btn", use_container_width=True):
-            st.session_state["del_subj_confirm"] = True
+    def count_items_in_folder(fid: str) -> dict:
+        # Count ONLY direct items in folder (not deep)
+        d = {"summary":0, "flashcards":0, "quiz":0}
+        for it in ALL_ITEMS:
+            if it.get("folder_id") == fid:
+                k = it.get("kind")
+                if k in d: d[k] += 1
+        return d
 
-        if st.session_state.get("rn_subj_mode"):
-            newn = st.text_input("New subject name", value=subj_pick, key="rn_subj_name")
-            rc1, rc2 = st.columns([1, 1])
-            if rc1.button("Save", key="rn_subj_save"):
+    def folder_card(folder: dict, level: str, key_prefix: str, move_targets: list):
+        """Render one folder 'card' with actions."""
+        c1, c2 = st.columns([6.5, 3.5])
+        name = folder.get("name","Untitled")
+        when = (folder.get("created_at","")[:16].replace("T"," "))
+        cnt = count_items_in_folder(folder["id"])
+        badge = f"📄 {cnt['summary']}  🧠 {cnt['flashcards']}  🧪 {cnt['quiz']}"
+
+        # Title + meta
+        c1.markdown(f"**{name}**  <span style='opacity:.6'>— {when}</span><br>"
+                    f"<span style='opacity:.8'>{badge}</span>", unsafe_allow_html=True)
+
+        # Actions row
+        a1, a2, a3, a4 = c2.columns([1.1, 1.1, 1.6, 1.2])
+
+        # Open -> switch to All Resources with filter via query params (open flat list)
+        if a1.button("Open", key=f"{key_prefix}_open_{folder['id']}"):
+            _set_params(view="all")
+            st.rerun()
+
+        # Rename inline
+        edit_key = f"{key_prefix}_edit_{folder['id']}"
+        if not st.session_state.get(edit_key):
+            if a2.button("Rename", key=f"{key_prefix}_rn_btn_{folder['id']}"):
+                st.session_state[edit_key] = True
+                st.rerun()
+        else:
+            newn = st.text_input("New name", value=name, key=f"{key_prefix}_rn_val_{folder['id']}")
+            s1, s2 = st.columns(2)
+            if s1.button("Save", key=f"{key_prefix}_rn_save_{folder['id']}"):
                 try:
-                    rename_folder(subj_id, (newn or "").strip())
-                    st.session_state.pop("rn_subj_mode", None)
-                    st.success("Subject renamed."); st.rerun()
+                    rename_folder(folder["id"], (newn or "").strip())
+                    st.session_state[edit_key] = False
+                    st.success("Renamed."); st.rerun()
                 except Exception as e:
                     st.error(f"Rename failed: {e}")
-            if rc2.button("Cancel", key="rn_subj_cancel"):
-                st.session_state.pop("rn_subj_mode", None); st.rerun()
+            if s2.button("Cancel", key=f"{key_prefix}_rn_cancel_{folder['id']}"):
+                st.session_state[edit_key] = False; st.rerun()
 
-        if st.session_state.get("del_subj_confirm"):
-            st.warning("Delete this subject and all nested exams/topics/items? This cannot be undone.")
-            dc1, dc2 = st.columns(2)
-            if dc1.button("Confirm delete", type="primary", key="del_subj_yes"):
+        # Move (simulate drag): pick a new parent
+        # Subjects (level="subject") can move to root (None) — so no "Move" for subjects (they're already root).
+        if level in ("exam","topic"):
+            target_map = {f["name"]: f["id"] for f in move_targets}
+            target_names = list(target_map.keys())
+            target_names.sort(key=str.lower)
+            tgt = a3.selectbox("Move to…", ["—"] + target_names, key=f"{key_prefix}_move_{folder['id']}")
+            if tgt != "—":
                 try:
-                    delete_folder(subj_id)
-                    st.session_state.pop("del_subj_confirm", None)
-                    st.success("Subject deleted."); st.rerun()
+                    move_folder_parent(folder["id"], target_map[tgt])
+                    st.success("Moved."); st.rerun()
+                except Exception as e:
+                    st.error(f"Move failed: {e}")
+        else:
+            a3.write("")  # filler
+
+        # Delete with confirm
+        del_key = f"{key_prefix}_del_{folder['id']}"
+        if not st.session_state.get(del_key):
+            if a4.button("Delete", key=f"{key_prefix}_del_btn_{folder['id']}"):
+                st.session_state[del_key] = True; st.rerun()
+        else:
+            st.warning("Delete this folder and all nested content? This cannot be undone.")
+            d1, d2 = st.columns(2)
+            if d1.button("Confirm", type="primary", key=f"{key_prefix}_del_yes_{folder['id']}"):
+                try:
+                    delete_folder(folder["id"]); st.success("Deleted."); st.rerun()
                 except Exception as e:
                     st.error(f"Delete failed: {e}")
-            if dc2.button("Cancel", key="del_subj_no"):
-                st.session_state.pop("del_subj_confirm", None); st.rerun()
-    else:
-        st.caption("Pick a Subject to reveal Exams.")
+            if d2.button("Cancel", key=f"{key_prefix}_del_no_{folder['id']}"):
+                st.session_state[del_key] = False; st.rerun()
 
-    # ---- EXAM row (inline actions) ----
-    exam_id = None
-    if subj_id:
-        exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj_id]
-        ex_names = [e["name"] for e in exams]
-        cex1, cex2, cex3 = st.columns([3, 0.9, 0.9])
-        ex_pick = cex1.selectbox("Exam", ["— select —"] + ex_names, key="res_exam_pick")
-        exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in ex_names else None
+        st.markdown("---")
 
-        if exam_id:
-            if cex2.button("Rename", key="rn_exam_btn", use_container_width=True):
-                st.session_state["rn_exam_mode"] = True
-            if cex3.button("Delete", key="del_exam_btn", use_container_width=True):
-                st.session_state["del_exam_confirm"] = True
+    # ---------- left controls (create + search) ----------
+    toolbar_l, toolbar_r = st.columns([6, 4])
+    with toolbar_l:
+        st.markdown("#### Create")
+        new_subj = st.text_input("New Subject", key="fx_new_subject", placeholder="e.g., A-Level Mathematics")
+        if st.button("Add Subject", key="fx_add_subject", disabled=not (new_subj or "").strip()):
+            try:
+                create_folder(new_subj.strip(), None); st.success("Subject created."); st.rerun()
+            except Exception as e:
+                st.error(f"Create failed: {e}")
 
-            if st.session_state.get("rn_exam_mode"):
-                newn = st.text_input("New exam name", value=ex_pick, key="rn_exam_name")
-                rc1, rc2 = st.columns(2)
-                if rc1.button("Save", key="rn_exam_save"):
-                    try:
-                        rename_folder(exam_id, (newn or "").strip())
-                        st.session_state.pop("rn_exam_mode", None)
-                        st.success("Exam renamed."); st.rerun()
-                    except Exception as e:
-                        st.error(f"Rename failed: {e}")
-                if rc2.button("Cancel", key="rn_exam_cancel"):
-                    st.session_state.pop("rn_exam_mode", None); st.rerun()
+    with toolbar_r:
+        st.markdown("#### Find")
+        q = st.text_input("Search folders", key="fx_folder_search", placeholder="Type to filter…")
 
-            if st.session_state.get("del_exam_confirm"):
-                st.warning("Delete this exam and all nested topics/items? This cannot be undone.")
-                dc1, dc2 = st.columns(2)
-                if dc1.button("Confirm delete", type="primary", key="del_exam_yes"):
-                    try:
-                        delete_folder(exam_id)
-                        st.session_state.pop("del_exam_confirm", None)
-                        st.success("Exam deleted."); st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
-                if dc2.button("Cancel", key="del_exam_no"):
-                    st.session_state.pop("del_exam_confirm", None); st.rerun()
-    else:
-        st.caption("Pick a Subject to reveal Exams.")
+    # ---------- selections ----------
+    st.session_state.setdefault("fx_sel_subject_id", None)
+    st.session_state.setdefault("fx_sel_exam_id", None)
 
-    # ---- TOPIC row (inline actions) ----
-    topic_id = None
-    if exam_id:
-        topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
-        tp_names = [t["name"] for t in topics]
-        ctp1, ctp2, ctp3 = st.columns([3, 0.9, 0.9])
-        tp_pick = ctp1.selectbox("Topic", ["— select —"] + tp_names, key="res_topic_pick")
-        topic_id = next((t["id"] for t in topics if t["name"]==tp_pick), None) if tp_pick in tp_names else None
+    # ---------- columns layout ----------
+    colS, colE, colT = st.columns(3)
 
-        if topic_id:
-            if ctp2.button("Rename", key="rn_topic_btn", use_container_width=True):
-                st.session_state["rn_topic_mode"] = True
-            if ctp3.button("Delete", key="del_topic_btn", use_container_width=True):
-                st.session_state["del_topic_confirm"] = True
+    # SUBJECTS
+    with colS:
+        st.markdown("### 📚 Subjects")
+        S = roots(ALL_FOLDERS)
+        if q: S = [s for s in S if q.lower() in s.get("name","").lower()]
+        S.sort(key=lambda r: r.get("name","").lower())
 
-            if st.session_state.get("rn_topic_mode"):
-                newn = st.text_input("New topic name", value=tp_pick, key="rn_topic_name")
-                rc1, rc2 = st.columns(2)
-                if rc1.button("Save", key="rn_topic_save"):
-                    try:
-                        rename_folder(topic_id, (newn or "").strip())
-                        st.session_state.pop("rn_topic_mode", None)
-                        st.success("Topic renamed."); st.rerun()
-                    except Exception as e:
-                        st.error(f"Rename failed: {e}")
-                if rc2.button("Cancel", key="rn_topic_cancel"):
-                    st.session_state.pop("rn_topic_mode", None); st.rerun()
+        # Selection dropdown to drive middle column
+        subj_names = [s["name"] for s in S]
+        current_subj = next((s for s in S if s["id"] == st.session_state["fx_sel_subject_id"]), None)
+        sel_label = current_subj["name"] if current_subj else "— select —"
+        picked = st.selectbox("Select Subject", ["— select —"] + subj_names, index=0, key="fx_pick_subject")
+        if picked in subj_names:
+            st.session_state["fx_sel_subject_id"] = next(s["id"] for s in S if s["name"] == picked)
 
-            if st.session_state.get("del_topic_confirm"):
-                st.warning("Delete this topic and all items? This cannot be undone.")
-                dc1, dc2 = st.columns(2)
-                if dc1.button("Confirm delete", type="primary", key="del_topic_yes"):
-                    try:
-                        delete_folder(topic_id)
-                        st.session_state.pop("del_topic_confirm", None)
-                        st.success("Topic deleted."); st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
-                if dc2.button("Cancel", key="del_topic_no"):
-                    st.session_state.pop("del_topic_confirm", None); st.rerun()
-    else:
-        st.caption("Pick an Exam to reveal Topics.")
+        st.markdown("---")
+        for s in S:
+            folder_card(s, level="subject", key_prefix=f"s_{s['id']}", move_targets=[])
 
-    # Items inside Topic
-    if topic_id:
-        st.progress(compute_topic_progress(topic_id), text="Topic progress")
-        emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-        try: items = list_items(topic_id, limit=200)
-        except: items = []
-        st.subheader("Resources in topic")
-        if not items: st.caption("No items yet.")
-        for it in items:
-            icon = emoji.get(it["kind"], "📄")
-            c0, c1, c2, c3 = st.columns([8,1.2,1.2,1.2])
-            c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
-            with c1:
-                if st.button("Open", key=f"res_open_{it['id']}", use_container_width=True):
-                    _set_params(item=it["id"], view="resources"); st.rerun()
-            with c2:
-                if not st.session_state.get(f"edit_item_{it['id']}", False):
-                    if st.button("Rename", key=f"res_btn_rename_{it['id']}", use_container_width=True):
-                        st.session_state[f"edit_item_{it['id']}"]=True; st.rerun()
-                else:
-                    newt = st.text_input("New title", value=it["title"], key=f"res_rn_{it['id']}")
-                    s1,s2 = st.columns(2)
-                    if s1.button("Save", key=f"res_save_{it['id']}"):
-                        try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
-                        except Exception as e: st.error(f"Rename failed: {e}")
-                    if s2.button("Cancel", key=f"res_cancel_{it['id']}"):
-                        st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
-            with c3:
-                if st.button("Delete", key=f"res_del_{it['id']}", use_container_width=True):
-                    try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
-                    except Exception as e: st.error(f"Delete failed: {e}")
+    # EXAMS (of selected subject)
+    with colE:
+        st.markdown("### 🧪 Exams")
+        sid = st.session_state.get("fx_sel_subject_id")
+        if not sid:
+            st.caption("Pick a Subject to see its Exams.")
+        else:
+            # create exam
+            new_exam = st.text_input("New Exam", key="fx_new_exam", placeholder="e.g., IGCSE May 2026")
+            if st.button("Add Exam", key="fx_add_exam", disabled=not (new_exam or "").strip()):
+                try:
+                    create_folder(new_exam.strip(), sid); st.success("Exam created."); st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+
+            E = children(ALL_FOLDERS, sid)
+            if q: E = [e for e in E if q.lower() in e.get("name","").lower()]
+            E.sort(key=lambda r: r.get("name","").lower())
+
+            # selection to drive topics
+            exam_names = [e["name"] for e in E]
+            current_exam = next((e for e in E if e["id"] == st.session_state["fx_sel_exam_id"]), None)
+            ex_label = current_exam["name"] if current_exam else "— select —"
+            ex_pick = st.selectbox("Select Exam", ["— select —"] + exam_names, index=0, key="fx_pick_exam")
+            if ex_pick in exam_names:
+                st.session_state["fx_sel_exam_id"] = next(e["id"] for e in E if e["name"] == ex_pick)
+
+            st.markdown("---")
+            # move targets for exams = all subjects (including same)
+            move_targets_for_exam = roots(ALL_FOLDERS)
+            for e in E:
+                folder_card(e, level="exam", key_prefix=f"e_{e['id']}", move_targets=move_targets_for_exam)
+
+    # TOPICS (of selected exam)
+    with colT:
+        st.markdown("### 🧩 Topics")
+        eid = st.session_state.get("fx_sel_exam_id")
+        if not eid:
+            st.caption("Pick an Exam to see its Topics.")
+        else:
+            # create topic
+            new_topic = st.text_input("New Topic", key="fx_new_topic", placeholder="e.g., Differentiation")
+            if st.button("Add Topic", key="fx_add_topic", disabled=not (new_topic or "").strip()):
+                try:
+                    create_folder(new_topic.strip(), eid); st.success("Topic created."); st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+
+            T = children(ALL_FOLDERS, eid)
+            if q: T = [t for t in T if q.lower() in t.get("name","").lower()]
+            T.sort(key=lambda r: r.get("name","").lower())
+
+            # move targets for topics = all exams under current subject (or all exams globally if you prefer)
+            # to keep it simple & safe: exams under the selected subject
+            exams_under_subject = children(ALL_FOLDERS, st.session_state.get("fx_sel_subject_id"))
+            for t in T:
+                folder_card(t, level="topic", key_prefix=f"t_{t['id']}", move_targets=exams_under_subject)
+
 
 def render_all_resources_page():
     # --------- Header / Back ---------
