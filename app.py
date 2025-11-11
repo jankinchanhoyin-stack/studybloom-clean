@@ -1,6 +1,180 @@
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚")
 
+# ---------------- Header Bar (top-right auth) ----------------
+def header_bar():
+    st.markdown(
+        """
+        <style>
+        .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
+        .topbar .left { font-weight:600; font-size:1.1rem; }
+        .topbar .right { display:flex; gap:.5rem; align-items:center; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    left, right = st.columns([3, 2])
+    with left:
+        # Back button on My Account page
+        view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
+        if view == "account":
+            if st.button("← Back", key="acct_back_btn"):
+                _set_params(view=""); st.rerun()
+        else:
+            st.markdown("<div class='left'>StudyBloom</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown("<div class='right'>", unsafe_allow_html=True)
+        if "sb_user" in st.session_state:
+            user = st.session_state["sb_user"]["user"]
+            dn = _user_display_name(user)
+            st.caption(f"Signed in as **{dn}**")
+            c1, c2 = st.columns([1,1], vertical_alignment="center")
+            with c1:
+                if st.button("My Account", key="btn_account"):
+                    _set_params(view="account"); st.rerun()
+            with c2:
+                if st.button("Sign out", key="btn_logout"):
+                    if cookies:
+                        try:
+                            if "sb_access" in cookies: del cookies["sb_access"]
+                            if "sb_email" in cookies: del cookies["sb_email"]
+                            cookies.save()
+                        except Exception:
+                            pass
+                    sign_out(); st.rerun()
+        else:
+            c1, c2 = st.columns([1,1])
+            with c1:
+                if st.button("Log in", key="btn_login"):
+                    st.session_state["auth_mode"] = "login"
+                    st.session_state["show_auth_dialog"] = True
+            with c2:
+                if st.button("Sign up", key="btn_signup"):
+                    st.session_state["auth_mode"] = "signup"
+                    st.session_state["show_auth_dialog"] = True
+        st.markdown("</div>", unsafe_allow_html=True)
+
+header_bar()
+
+# ---------------- Auth Dialog ----------------
+if "show_auth_dialog" not in st.session_state:
+    st.session_state["show_auth_dialog"] = False
+if "auth_mode" not in st.session_state:
+    st.session_state["auth_mode"] = "login"
+
+def open_auth(mode="login"):
+    st.session_state["auth_mode"] = mode
+    st.session_state["show_auth_dialog"] = True
+
+def close_auth():
+    st.session_state["show_auth_dialog"] = False
+
+@st.dialog("Welcome to StudyBloom")
+def auth_dialog():
+    mode = st.session_state.get("auth_mode", "login")
+    tabs = st.tabs(["Log in", "Sign up"])
+    # ----- Login tab -----
+    with tabs[0]:
+        st.markdown("### Log in")
+        email = st.text_input("Email", key="dlg_login_email")
+        pwd = st.text_input("Password", type="password", key="dlg_login_pwd")
+        remember = st.checkbox("Stay signed in", value=True, key="dlg_login_rem")
+        col1, col2 = st.columns(2)
+        if col1.button("Log in", type="primary", key="dlg_login_btn"):
+            try:
+                data = sign_in(email, pwd)
+                if remember and cookies:
+                    tok = data.get("access_token")
+                    if tok:
+                        cookies["sb_access"] = tok
+                        cookies["sb_email"] = email or ""
+                        cookies.save()
+                close_auth(); st.rerun()
+            except Exception as e:
+                st.error(str(e))
+        if col2.button("Cancel", key="dlg_login_cancel"):
+            close_auth()
+
+    # ----- Sign-up tab -----
+    with tabs[1]:
+        st.markdown("### Create your account")
+        disp = st.text_input("Display name", key="dlg_reg_display")
+        usern = st.text_input("Username", key="dlg_reg_username", help="Shown to others; can be edited later.")
+        remail = st.text_input("Email", key="dlg_reg_email")
+        rpwd = st.text_input("Password", type="password", key="dlg_reg_pwd")
+        rpwd2 = st.text_input("Confirm password", type="password", key="dlg_reg_pwd2")
+        c1, c2 = st.columns(2)
+        if c1.button("Sign up", type="primary", key="dlg_reg_btn"):
+            if rpwd != rpwd2:
+                st.error("Passwords do not match.")
+            elif not disp.strip() or not usern.strip():
+                st.error("Please enter display name and username.")
+            else:
+                try:
+                    sign_up(remail, rpwd, disp.strip(), usern.strip())
+                    st.success("Account created. Please check your email to confirm, then log in.")
+                except Exception as e:
+                    st.error(str(e))
+        if c2.button("Cancel", key="dlg_reg_cancel"):
+            close_auth()
+
+# Auto-open on entry if not signed in
+if ("sb_user" not in st.session_state) and not st.session_state.get("auth_dismissed_once"):
+    st.session_state["auth_mode"] = "login"
+    st.session_state["show_auth_dialog"] = True
+    st.session_state["auth_dismissed_once"] = True
+
+if st.session_state.get("show_auth_dialog"):
+    auth_dialog()
+# ---------------- My Account PAGE ----------------
+params = _get_params()
+if ((_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")) == "account":
+    st.title("My Account")
+    if "sb_user" not in st.session_state:
+        st.info("Please log in.")
+        st.stop()
+    user = st.session_state["sb_user"]["user"]  # fresh-ish
+    md = (user.get("user_metadata") or {})
+    disp_cur = md.get("display_name") or ""
+    usern_cur = md.get("username") or _user_username(user)
+    email_cur = user.get("email") or ""
+
+    st.markdown("### Profile")
+    c1, c2 = st.columns(2)
+    with c1:
+        new_disp = st.text_input("Display name", value=disp_cur, key="acct_disp")
+    with c2:
+        new_usern = st.text_input("Username", value=usern_cur, key="acct_usern", help="Letters/numbers/underscore recommended.")
+
+    st.text_input("Email", value=email_cur, disabled=True, key="acct_email")
+
+    if st.button("Save profile", type="primary", key="acct_save"):
+        try:
+            update_profile(display_name=new_disp.strip(), username=new_usern.strip())
+            st.success("Profile updated.")
+        except Exception as e:
+            st.error(f"Update failed: {e}")
+
+    st.markdown("---")
+    st.markdown("### Change password")
+    npwd1 = st.text_input("New password", type="password", key="acct_pwd1")
+    npwd2 = st.text_input("Confirm new password", type="password", key="acct_pwd2")
+    if st.button("Update password", key="acct_pwd_btn"):
+        if npwd1 != npwd2:
+            st.error("Passwords do not match.")
+        elif not npwd1:
+            st.error("Enter a password.")
+        else:
+            try:
+                update_password(npwd1)
+                st.success("Password changed.")
+            except Exception as e:
+                st.error(f"Password change failed: {e}")
+
+    st.stop()
+
+
 # ---- CSS: compact action buttons, avoid wrapping ----
 st.markdown("""
 <style>
@@ -27,11 +201,12 @@ from llm import (
     grade_free_answer,
 )
 from auth_rest import (
-    sign_in, sign_up, sign_out,
+    sign_in, sign_up, sign_out, refresh_user,
     save_item, list_items, get_item, move_item, delete_item,
     create_folder, list_folders, delete_folder, list_child_folders,
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
     save_flash_review, list_flash_reviews_for_items,
+    update_profile, update_password,
 )
 
 st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
@@ -97,6 +272,19 @@ if "sb_user" not in st.session_state and cookies:
         user = _fetch_user_from_token(tok)
         if user:
             st.session_state["sb_user"] = {"user": user, "access_token": tok}
+
+def _user_display_name(u: dict) -> str:
+    md = (u or {}).get("user_metadata") or {}
+    return md.get("display_name") or md.get("username") or (u.get("email") or "Account")
+
+def _user_username(u: dict) -> str:
+    md = (u or {}).get("user_metadata") or {}
+    if md.get("username"):
+        return md["username"]
+    # fallback: deterministic short id
+    uid = (u.get("id") or "")[-6:] or "000000"
+    return f"user{uid}"
+
 
 # ---------------- Progress calc ----------------
 def compute_topic_progress(topic_folder_id: str) -> float:
@@ -291,39 +479,6 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
         except Exception as e:
             st.error(f"Re-generate failed: {e}")
 
-# ---------------- Sidebar: Auth ----------------
-st.sidebar.title("StudyBloom")
-st.sidebar.caption("Log in to save & organize.")
-if "sb_user" not in st.session_state:
-    st.sidebar.subheader("Sign in")
-    email = st.sidebar.text_input("Email", key="login_email")
-    pwd   = st.sidebar.text_input("Password", type="password", key="login_pwd")
-    remember = st.sidebar.checkbox("Stay signed in", value=True, key="remember_me")
-    if st.sidebar.button("Sign in", use_container_width=True, key="login_btn"):
-        try:
-            sign_in(email, pwd)  # sets st.session_state["sb_user"]
-            if remember and cookies and "sb_user" in st.session_state:
-                tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
-                if tok:
-                    cookies["sb_access"] = tok
-                    cookies["sb_email"] = email or ""
-                    cookies.save()
-            st.rerun()
-        except Exception as e: st.sidebar.error(str(e))
-    st.sidebar.subheader("Create account")
-    remail = st.sidebar.text_input("New email", key="reg_email")
-    rpwd   = st.sidebar.text_input("New password", type="password", key="reg_pwd")
-    if st.sidebar.button("Sign up", use_container_width=True, key="reg_btn"):
-        try: sign_up(remail, rpwd); st.sidebar.success("Check email to confirm, then sign in.")
-        except Exception as e: st.sidebar.error(str(e))
-else:
-    st.sidebar.success(f"Signed in as {st.session_state['sb_user']['user'].get('email','account')}")
-    if st.sidebar.button("Sign out", use_container_width=True, key="logout_btn"):
-        if cookies:
-            if "sb_access" in cookies: del cookies["sb_access"]
-            if "sb_email" in cookies: del cookies["sb_email"]
-            cookies.save()
-        sign_out(); st.rerun()
 
 # ---------------- Load folders ----------------
 if "sb_user" in st.session_state:
