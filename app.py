@@ -303,7 +303,6 @@ def _set_params(**kwargs):
         if clean:
             st.query_params.update(clean)
     except Exception:
-        # Streamlit <1.30 fallback
         st.experimental_set_query_params(**clean)
 
 def _go_home():
@@ -457,18 +456,6 @@ def _maybe_open_requested_dialog():
 
 _maybe_open_requested_dialog()
 
-
-# ---------------- Query helpers ----------------
-def _get_params() -> Dict[str, str]:
-    try: return dict(st.query_params)
-    except: return st.experimental_get_query_params()
-
-def _set_params(**kwargs):
-    try:
-        st.query_params.clear()
-        st.query_params.update(kwargs)
-    except Exception:
-        st.experimental_set_query_params(**kwargs)
 
 # ---------------- Supabase REST helpers ----------------
 def _sb_headers():
