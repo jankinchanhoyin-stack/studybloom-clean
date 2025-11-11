@@ -383,13 +383,30 @@ else:
     def signup_dialog(): st.warning("Dialog not supported in this environment.")
 
 # ---------- Top bar ----------
+# ---------- Top bar ----------
 def _topbar():
-    left, _ = st.columns([9, 9])
+    left, right = st.columns([8, 4])
     with left:
-        st.markdown("<h1 style='margin:0;'>📚StudyBloom</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
 
-_topbar()
-st.divider()
+    # If not signed in, show Sign in / Sign up on the right
+    with right:
+        if "sb_user" not in st.session_state:
+            c1, c2 = st.columns(2)
+            if c1.button("Sign in", key="hdr_signin"):
+                if st_dialog is not None:
+                    login_dialog()
+                else:
+                    st.warning("Sign-in dialog not supported in this environment.")
+            if c2.button("Sign up", key="hdr_signup"):
+                if st_dialog is not None:
+                    signup_dialog()
+                else:
+                    st.warning("Sign-up dialog not supported in this environment.")
+        else:
+            # Signed-in header can stay clean since Profile/Sign out live elsewhere
+            pass
+
 
 # ---------- Open requested dialog (avoids nested dialogs) ----------
 def _maybe_open_requested_dialog():
@@ -1300,6 +1317,18 @@ _view_param = _get_params().get("view")
 view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
 
 def render_community_page():
+    # --- Back to home ---
+    top_l, _ = st.columns([1, 9])
+    if top_l.button("← Back", key="comm_back"):
+        _set_params(view=None)
+        st.rerun()
+
+    st.markdown("## 👥 Community")
+
+    # Optional: guard if not signed in
+    if "sb_user" not in st.session_state:
+        st.info("Please sign in to use Community features.")
+        return
     st.markdown("## 👥 Community")
 
     if "sb_user" not in st.session_state:
