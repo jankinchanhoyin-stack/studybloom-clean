@@ -321,6 +321,26 @@ def _iso_start_of_next_month_utc() -> str:
     start = datetime(year, month, 1, tzinfo=timezone.utc)
     return start.isoformat()
 
+def _sb_headers():
+    """
+    Returns (base_url, headers) for Supabase REST calls using the anon/service key.
+    Keep this in auth_rest.py so functions here don't depend on app.py.
+    """
+    url = st.secrets.get("SUPABASE_URL")
+    key = (
+        st.secrets.get("SUPABASE_ANON_KEY")
+        or st.secrets.get("SUPABASE_KEY")
+    )
+    if not url or not key:
+        raise RuntimeError("Missing SUPABASE_URL / SUPABASE_ANON_KEY (or SUPABASE_KEY).")
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    return url, headers
+
 def sb_find_profile_by_username(username: str) -> Optional[dict]:
     if not username:
         return None
@@ -333,6 +353,9 @@ def sb_find_profile_by_username(username: str) -> Optional[dict]:
     if r.status_code == 200 and r.json():
         return r.json()[0]
     return None
+
+
+
 
 def sb_add_friend(friend_username: str) -> tuple[bool, str]:
     me = _current_user_id()
@@ -407,6 +430,7 @@ def sb_list_friends_with_profiles() -> list[dict]:
             "display_name": p.get("display_name") or "",
         })
     return out
+
 
 
 def sb_sum_xp_for_window(user_id: str, start_iso: str, end_iso: str) -> int:
