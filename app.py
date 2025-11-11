@@ -741,29 +741,44 @@ with tabs[0]:
         if quiz_mode == "Multiple choice":
             mcq_options = st.slider("MCQ options per question", 3, 6, st.session_state.get("qs_mcq_opts", 4), key="qs_mcq_opts")
 
+        # --- Upload files (unchanged) ---
         files = st.file_uploader(
             "Upload files (PDF, PPTX, JPG, PNG, TXT)",
             type=["pdf", "pptx", "jpg", "jpeg", "png", "txt"],
             accept_multiple_files=True,
             key="qs_files",
         )
-
-        # ---- Gate the generate button until all required inputs exist ----
-        has_subject = bool(subject_id or st.session_state.get("qs_new_subject"))
-        has_exam = bool(exam_id or st.session_state.get("qs_new_exam"))
+        
+        # --- What to generate (new) ---
+        st.markdown("### What to generate")
+        sel_notes = st.checkbox("📄 Notes", value=True, key="qs_sel_notes")
+        sel_flash = st.checkbox("🧠 Flashcards", value=True, key="qs_sel_flash")
+        sel_quiz  = st.checkbox("🧪 Quiz", value=True, key="qs_sel_quiz")
+        
+        # ---- Gate the generate button ----
+        has_subject    = bool(subject_id or st.session_state.get("qs_new_subject"))
+        has_exam       = bool(exam_id or st.session_state.get("qs_new_exam"))
         has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
-        has_files = bool(files)
-        has_audience = bool(audience)
-
-        can_generate = (subject_id is not None) and (exam_id is not None) and has_topic_text and has_files and has_audience
-
+        has_files      = bool(files)
+        has_audience   = True  # already chosen above
+        has_selection  = sel_notes or sel_flash or sel_quiz
+        
+        can_generate = (
+            (subject_id is not None) and
+            (exam_id is not None) and
+            has_topic_text and
+            has_files and
+            has_audience and
+            has_selection
+        )
+        
         gen_clicked = st.button(
-            "Generate Notes + Flashcards + Quiz",
+            "Generate",
             type="primary",
             key="qs_generate_btn",
             disabled=not can_generate
         )
-
+        
         if gen_clicked and can_generate:
             # Resolve destination folders freshly
             subjects = _roots(list_folders())
@@ -796,56 +811,75 @@ with tabs[0]:
                 or (subject_hint or "Study Pack")
             )
         
+            # Progress bar
             prog = st.progress(0, text="Starting…")
             try:
+                # 1) Extract text (always needed)
                 prog.progress(10, text="Extracting text…")
                 text = extract_any(files)
                 if not text.strip():
                     st.error("No text detected in the uploaded files.")
                     st.stop()
         
+                # 2) Summarize into structured 'data' (we need this for notes / flashcards / quiz)
                 prog.progress(35, text="Summarising with AI…")
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
         
-                prog.progress(60, text="Generating flashcards & quiz…")
-                cards = []
-                try:
-                    cards = generate_flashcards_from_notes(data, audience=audience)
-                except Exception as e:
-                    st.warning(f"Flashcards skipped: {e}")
+                # Prepare IDs
+                summary_id = None
+                flash_id   = None
+                quiz_id    = None
         
-                qs = generate_quiz_from_notes(
-                    data,
-                    subject=subject_hint,
-                    audience=audience,
-                    num_questions=30,
-                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
-                    mcq_options=mcq_options,
-                )
+                # 3) Generate flashcards (if selected)
+                if sel_flash:
+                    prog.progress(55, text="Generating flashcards…")
+                    cards = []
+                    try:
+                        cards = generate_flashcards_from_notes(data, audience=audience)
+                    except Exception as e:
+                        st.warning(f"Flashcards skipped: {e}")
+                        cards = []
         
-                prog.progress(85, text="Saving items…")
-                title_notes = f"📄 {base_title} — Notes"
-                title_flash = f"🧠 {base_title} — Flashcards"
-                title_quiz  = f"🧪 {base_title} — Quiz"
+                # 4) Generate quiz (if selected)
+                if sel_quiz:
+                    prog.progress(70, text="Generating quiz…")
+                    qs = generate_quiz_from_notes(
+                        data,
+                        subject=subject_hint,
+                        audience=audience,
+                        num_questions=8,
+                        mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+                        mcq_options=mcq_options,
+                    )
+                else:
+                    qs = None
         
-                summary = save_item("summary", title_notes, data, dest_folder)
-                summary_id = summary.get("id")
-                flash_id = quiz_id = None
+                # 5) Save selected items
+                prog.progress(85, text="Saving selected items…")
         
-                if cards:
+                if sel_notes:
+                    title_notes = f"📄 {base_title} — Notes"
+                    summary = save_item("summary", title_notes, data, dest_folder)
+                    summary_id = summary.get("id")
+        
+                if sel_flash and 'cards' in locals() and cards:
+                    title_flash = f"🧠 {base_title} — Flashcards"
                     flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
                     flash_id = flash.get("id")
         
-                quiz_payload = {"questions": qs}
-                if quiz_mode == "Multiple choice":
-                    quiz_payload["type"] = "mcq"
-                quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
-                quiz_id = quiz_item.get("id")
+                if sel_quiz and qs:
+                    title_quiz = f"🧪 {base_title} — Quiz"
+                    quiz_payload = {"questions": qs}
+                    if quiz_mode == "Multiple choice":
+                        quiz_payload["type"] = "mcq"
+                        quiz_payload["mcq_options"] = mcq_options
+                    quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
+                    quiz_id = quiz_item.get("id")
         
                 prog.progress(100, text="Done!")
                 st.success("Saved ✅")
         
-                # ✅ Save IDs for persistence across reruns
+                # Persist IDs for the next rerun so Open buttons work
                 st.session_state["qs_created_summary_id"] = summary_id or None
                 st.session_state["qs_created_flash_id"]   = flash_id or None
                 st.session_state["qs_created_quiz_id"]    = quiz_id or None
@@ -853,7 +887,7 @@ with tabs[0]:
             except Exception as e:
                 st.error(f"Generation failed: {e}")
         
-        # --- Always show "Open" buttons for last generated items ---
+        # --- Always show 'Open' buttons for last generated items ---
         sid = st.session_state.get("qs_created_summary_id")
         fid = st.session_state.get("qs_created_flash_id")
         qid = st.session_state.get("qs_created_quiz_id")
@@ -867,7 +901,7 @@ with tabs[0]:
                 _set_params(item=fid, view="all"); st.rerun()
             if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
                 _set_params(item=qid, view="all"); st.rerun()
-
+        
 
 # ===== Resources =====
 with tabs[1]:
