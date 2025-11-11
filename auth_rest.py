@@ -41,16 +41,59 @@ def sign_in(email: str, password: str):
     st.session_state["sb_user"] = {"access_token": data["access_token"], "user": data["user"]}
     return data
 
-def sign_up(email: str, password: str):
+def sign_up(email: str, password: str, display_name: str = "", username: str = ""):
     url, _ = _get_keys()
     r = requests.post(
         f"{url}/auth/v1/signup",
-        json={"email": email, "password": password},
-        headers=_headers(), timeout=20
+        json={
+            "email": email,
+            "password": password,
+            "data": {"display_name": display_name, "username": username}
+        },
+        headers=_headers(),
+        timeout=20
     )
     r.raise_for_status()
     return r.json()
 
+def current_user() -> dict:
+    """Fetch the authenticated user from Supabase Auth."""
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.get(f"{url}/auth/v1/user", headers=_headers(token), timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+def update_profile(display_name: Optional[str] = None, username: Optional[str] = None) -> dict:
+    """Update user metadata (display_name, username)."""
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    data = {}
+    if display_name is not None or username is not None:
+        meta = {}
+        if display_name is not None: meta["display_name"] = display_name
+        if username is not None: meta["username"] = username
+        data["data"] = meta
+    if not data:
+        raise RuntimeError("Nothing to update.")
+    r = requests.put(f"{url}/auth/v1/user", headers=_headers(token), json=data, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+def change_password(new_password: str) -> dict:
+    """Change the authenticated user's password."""
+    if not new_password:
+        raise RuntimeError("New password cannot be empty.")
+    url, _ = _get_keys()
+    token, _ = _require_user()
+    r = requests.put(
+        f"{url}/auth/v1/user",
+        headers=_headers(token),
+        json={"password": new_password},
+        timeout=20
+    )
+    r.raise_for_status()
+    return r.json()
 def sign_out():
     st.session_state.pop("sb_user", None)
 
