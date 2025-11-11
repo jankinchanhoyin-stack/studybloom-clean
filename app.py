@@ -69,6 +69,72 @@ if "sb_user" not in st.session_state and cookies and not st.session_state.get("j
 if st.session_state.get("just_logged_out"):
     st.session_state.pop("just_logged_out")
 
+from datetime import datetime, timedelta, timezone
+from typing import Tuple
+
+def _parse_iso(ts: str) -> datetime:
+    try:
+        if ts.endswith("Z"):
+            return datetime.fromisoformat(ts[:-1]).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(ts).astimezone(timezone.utc)
+    except Exception:
+        return datetime.now(timezone.utc)
+
+def _window_bounds(kind: str) -> Tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    if kind == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        return start, end
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+    return start, end
+
+def compute_xp(period: str = "today") -> Tuple[int, int]:
+    """
+    Returns (flash_known_count, quiz_correct_count) for the given period.
+    Uses list_items(), list_flash_reviews_for_items(), and list_quiz_attempts_for_items().
+    """
+    if "sb_user" not in st.session_state:
+        return 0, 0
+
+    try:
+        items = list_items(None, limit=2000)
+    except Exception:
+        items = []
+
+    quiz_ids = [it["id"] for it in items if it.get("kind") == "quiz"]
+    flash_ids = [it["id"] for it in items if it.get("kind") == "flashcards"]
+
+    start, end = _window_bounds("today" if period == "today" else "month")
+
+    flash_known = 0
+    try:
+        if flash_ids:
+            reviews = list_flash_reviews_for_items(flash_ids) or []
+            for r in reviews:
+                ts = _parse_iso(r.get("created_at", ""))
+                if start <= ts < end and r.get("known") is True:
+                    flash_known += 1
+    except Exception:
+        pass
+
+    quiz_correct = 0
+    try:
+        if quiz_ids:
+            attempts = list_quiz_attempts_for_items(quiz_ids) or []
+            for a in attempts:
+                ts = _parse_iso(a.get("created_at", ""))
+                if start <= ts < end:
+                    quiz_correct += int(a.get("correct", 0) or 0)
+    except Exception:
+        pass
+
+    return flash_known, quiz_correct
+
 
 # ---------------- Query helpers (needed by top bar) ----------------
 def _get_params() -> Dict[str, str]:
