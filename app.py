@@ -260,7 +260,7 @@ else:
 def _topbar():
     left, _ = st.columns([9, 9])
     with left:
-        st.markdown("<h1 style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='margin:0;'>📚StudyBloom</h1>", unsafe_allow_html=True)
 
 _topbar()
 st.divider()
@@ -959,6 +959,39 @@ if is_account:
                     st.success("Password changed.")
                 except Exception as e:
                     st.error(f"Password change failed: {e}")
+
+    st.divider()
+
+    # -------- XP (Daily + Monthly) --------
+    st.subheader("Your XP")
+
+    # Compute
+    fc_today, qz_today   = compute_xp("today")
+    fc_month, qz_month   = compute_xp("month")
+    xp_today  = fc_today + qz_today
+    xp_month  = fc_month + qz_month
+
+    # Goals (tweak if you like)
+    DAILY_XP_GOAL   = 30
+    MONTHLY_XP_GOAL = 600
+
+    colA, colB = st.columns([3, 2])
+    with colA:
+        st.write(f"**Today's XP**: {xp_today} / {DAILY_XP_GOAL}")
+        st.progress(min(1.0, xp_today / max(1, DAILY_XP_GOAL)))
+    with colB:
+        st.metric("Flashcards ✅ today", fc_today)
+        st.metric("Quiz correct today", qz_today)
+
+    colC, colD = st.columns([3, 2])
+    with colC:
+        st.write(f"**This Month's XP**: {xp_month} / {MONTHLY_XP_GOAL}")
+        st.progress(min(1.0, xp_month / max(1, MONTHLY_XP_GOAL)))
+    with colD:
+        st.metric("Flashcards ✅ this month", fc_month)
+        st.metric("Quiz correct this month", qz_month)
+
+    st.caption("XP counts flashcards you marked **Knew it** and quiz questions you got right from **saved attempts**.")
 
     st.divider()
 
