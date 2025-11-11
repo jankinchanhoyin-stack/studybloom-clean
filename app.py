@@ -1370,9 +1370,19 @@ def render_community_page():
     # --- Friends leaderboard (today/month) ---
     st.markdown("### Friends’ XP")
 
-    me = (st.session_state.get("sb_user") or {}).get("user") or {}
-    me_id = me.get("id")
-    me_name = (me.get("user_metadata") or {}).get("display_name") or (me.get("email") or "me")
+    try:
+        me = current_user()  # returns the Supabase user object
+    except Exception as e:
+        st.error(f"Could not load your profile: {e}")
+        return
+    
+    # robustly get the ID and a display name
+    me_id = me.get("id") or (me.get("user") or {}).get("id")
+    me_meta = (me.get("user_metadata") or {})
+    me_name = me_meta.get("display_name") or me.get("email") or "me"
+    if not me_id:
+        st.error("Could not resolve your account ID. Try reloading or signing in again.")
+        return
 
     rows = []
     my_xp = sb_get_xp_totals_for_user(me_id)
