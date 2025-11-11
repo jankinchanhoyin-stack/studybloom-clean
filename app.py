@@ -776,37 +776,33 @@ with tabs[0]:
             _nav(next_ok=bool((subject_hint or "").strip()))
 
         # ---------- STEP 4: Quiz type ----------
-        elif st.session_state["qs_step"] == 4:
-            st.header("5) Quiz settings")
-            quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0 if st.session_state.get("qs_quiz_mode","Free response")=="Free response" else 1, horizontal=True, key="qs_quiz_mode")
-            if quiz_mode == "Multiple choice":
-                st.slider("MCQ options per question", 3, 6, st.session_state.get("qs_mcq_opts",4), key="qs_mcq_opts")
-            _nav(next_ok=True)
-
-        # ---------- STEP 5: Files + Generate ----------
         elif st.session_state["qs_step"] == 5:
             st.header("6) Upload & Generate")
-            files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
-                                     type=["pdf","pptx","jpg","jpeg","png","txt"],
-                                     accept_multiple_files=True, key="qs_files")
-            has_files = bool(files)
-
-            # Validate readiness
+            files = st.file_uploader(
+                "Upload files (PDF, PPTX, JPG, PNG, TXT)",
+                type=["pdf","pptx","jpg","jpeg","png","txt"],
+                accept_multiple_files=True,
+                key="qs_files",
+            )
+        
+            # everything before this step is already valid; we only need files
             subj_new = (st.session_state.get("qs_mode_subject") == "Create new")
             exam_new = (st.session_state.get("qs_mode_exam") == "Create new")
             subject_ok   = subj_new or bool(st.session_state.get("qs_subject_id"))
             exam_ok      = exam_new or bool(st.session_state.get("qs_exam_id"))
             topic_ok     = bool((st.session_state.get("qs_new_topic") or "").strip())
             hint_ok      = bool((st.session_state.get("qs_subject_hint") or "").strip())
-            audience_ok  = True
-            ready = subject_ok and exam_ok and topic_ok and hint_ok and audience_ok and has_files
-
-            # Generate button
+            has_files    = bool(files)
+        
+            ready = subject_ok and exam_ok and topic_ok and hint_ok and has_files
+        
+            # Generate button (enabled immediately once files are present + prior steps valid)
             gen_clicked = st.button(
                 "Generate Notes + Flashcards + Quiz",
                 type="primary",
                 disabled=not ready,
-                key="qs_generate_btn"
+                key="qs_generate_btn",
+                use_container_width=False,
             )
 
             # ---------- pipeline (unchanged, but with on-demand folder creation) ----------
@@ -913,7 +909,7 @@ with tabs[0]:
                     st.error(f"Generation failed: {e}")
 
             # Back/Next at bottom of final step (Next disabled)
-            _nav(next_ok=False, next_label="Next")
+            _nav(show_next=False)
 
 
 # ===== Resources =====
