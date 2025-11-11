@@ -1465,7 +1465,7 @@ def render_community_page():
 def render_resources_page():
     # ← Home (top-left)
     bcol, _ = st.columns([1, 9])
-    if bcol.button("← Home", key="res_back_home"):
+    if bcol.button("← Home", f"nav_home"):
         _set_params(view=None)
         st.rerun()
 
