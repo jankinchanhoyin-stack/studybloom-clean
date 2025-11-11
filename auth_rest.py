@@ -236,6 +236,65 @@ def list_flash_reviews_for_items(item_ids: List[str]) -> List[Dict]:
     r.raise_for_status()
     return r.json()
 
+def sign_up(email: str, password: str, display_name: str = "", username: str = ""):
+    url, key = _get_keys()
+    payload = {
+        "email": email,
+        "password": password,
+        "display_name": display_name,
+        "username": username
+    }
+    r = requests.post(
+        f"{url}/auth/v1/signup",
+        json=payload,
+        headers=_headers(), timeout=20
+    )
+    r.raise_for_status()
+    return r.json()
+
+def get_user_info():
+    # Load from session or REST API
+    user = st.session_state["sb_user"]["user"]
+    return {
+        "display_name": user.get("display_name", ""),
+        "username": user.get("username", ""),
+        "email": user.get("email", "")
+    }
+
+def update_user_info(display_name, username, email):
+    # Need to PATCH user details in Supabase (or other user table)
+    url, key = _get_keys()
+    token, user = _require_user()
+    # update user table with given fields; user id in session
+    payload = {}
+    if display_name: payload["display_name"] = display_name
+    if username: payload["username"] = username
+    if email: payload["email"] = email
+    r = requests.patch(
+        f"{url}/rest/v1/users?id=eq.{user['id']}",
+        headers=_headers(token),
+        json=payload, timeout=20
+    )
+    r.raise_for_status()
+    # update session
+    user.update(payload)
+    st.session_state["sb_user"]["user"] = user
+    return True
+
+def change_password(old_password, new_password):
+    url, key = _get_keys()
+    token, user = _require_user()
+    payload = {
+        "current_password": old_password,
+        "new_password": new_password
+    }
+    r = requests.post(
+        f"{url}/auth/v1/user/change-password",
+        headers=_headers(token), json=payload, timeout=20
+    )
+    r.raise_for_status()
+    return True
+
 
 
 
