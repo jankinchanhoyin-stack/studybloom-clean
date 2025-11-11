@@ -1,5 +1,4 @@
 import streamlit as st
-st.markdown("<h1 class='title-main'>StudyBloom</h1>", unsafe_allow_html=True)
 # === Global theme & layout ===
 # =========================
 # LIGHT THEME + COMPACT UI
@@ -412,7 +411,7 @@ else:
 def _topbar():
     left, right = st.columns([6, 4])
     with left:
-        st.markdown("### StudyBloom")
+        st.markdown("<h1 class='title-main'>StudyBloom</h1>", unsafe_allow_html=True)
     with right:
         if "sb_user" not in st.session_state:
             c1, c2 = st.columns(2)
