@@ -192,24 +192,12 @@ else:
 
 # ---------- Top bar ----------
 def _topbar():
-    # Header layout: StudyBloom (left) + My Profile (right)
-    left, right = st.columns([9, 3])
+    left, _ = st.columns([1, 9])
     with left:
-        st.markdown("<h1 class='title-main' style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
 
-    with right:
-        b1, b2 = st.columns([1, 1])
-        if "sb_user" not in st.session_state:
-            with b1:
-                if st.button("Log in", key="top_login"):
-                    st.session_state["want_dialog"] = "login"
-                    st.rerun()
-            with b2:
-                if st.button("Sign up", key="top_signup"):
-                    st.session_state["want_dialog"] = "signup"
-                    st.rerun()
-        else:
-            1=1
+_topbar()
+st.divider()
 _topbar()
 st.divider()
 
