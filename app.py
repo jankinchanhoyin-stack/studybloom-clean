@@ -794,29 +794,18 @@ with tabs[0]:
                 key="qs_files",
             )
         
-            # Validate readiness (everything prior should already be set)
-            subj_new   = (st.session_state.get("qs_mode_subject") == "Create new")
-            exam_new   = (st.session_state.get("qs_mode_exam") == "Create new")
-            subject_ok = subj_new or bool(st.session_state.get("qs_subject_id"))
-            exam_ok    = exam_new or bool(st.session_state.get("qs_exam_id"))
-            topic_ok   = bool((st.session_state.get("qs_new_topic") or "").strip())
-            hint_ok    = bool((st.session_state.get("qs_subject_hint") or "").strip())
-            has_files  = bool(files)
-        
-            ready = subject_ok and exam_ok and topic_ok and hint_ok and has_files
-        
-            # Generate enabled immediately once files are present + prior steps valid
+            # Enable generate as soon as at least one file is uploaded
+            has_files = bool(files)
             gen_clicked = st.button(
                 "Generate Notes + Flashcards + Quiz",
                 type="primary",
-                disabled=not ready,
+                disabled=not has_files,
                 key="qs_generate_btn",
             )
         
-            if gen_clicked and ready:
+            if gen_clicked and has_files:
                 try:
                     # ------- resolve / create folders on demand -------
-                    # Refresh folders to avoid stale state
                     try:
                         all_folders = list_folders()
                     except Exception:
@@ -825,41 +814,49 @@ with tabs[0]:
                     def _roots(rows): return [r for r in rows if not r.get("parent_id")]
                     def _children(rows, pid): return [r for r in rows if r.get("parent_id") == pid]
         
-                    # SUBJECT
+                    # Subject: use existing id or create from saved name
+                    subj_new   = (st.session_state.get("qs_mode_subject") == "Create new")
                     subject_id = st.session_state.get("qs_subject_id")
                     if subj_new:
-                        # Case-insensitive dedupe
                         subj_name = (st.session_state.get("qs_new_subject") or "").strip()
                         existing_subjects = _roots(all_folders)
                         subj_names_lower = {s["name"].lower(): s["id"] for s in existing_subjects}
-                        if subj_name.lower() in subj_names_lower:
+                        if subj_name and subj_name.lower() in subj_names_lower:
                             subject_id = subj_names_lower[subj_name.lower()]
                         else:
+                            if not subj_name:
+                                st.error("Missing subject name. Go back one step and enter it.")
+                                st.stop()
                             created = create_folder(subj_name, None)
                             subject_id = created["id"]
-        
                     if not subject_id:
                         st.error("Could not resolve Subject. Please go back and try again.")
                         st.stop()
         
-                    # EXAM
-                    exam_id = st.session_state.get("qs_exam_id")
+                    # Exam: use existing id or create from saved name
+                    exam_new = (st.session_state.get("qs_mode_exam") == "Create new")
+                    exam_id  = st.session_state.get("qs_exam_id")
                     if exam_new:
                         exam_name = (st.session_state.get("qs_new_exam") or "").strip()
-                        existing_exams = _children(list_folders(), subject_id)  # re-fetch to be safe
+                        existing_exams = _children(list_folders(), subject_id)
                         exam_names_lower = {e["name"].lower(): e["id"] for e in existing_exams}
-                        if exam_name.lower() in exam_names_lower:
+                        if exam_name and exam_name.lower() in exam_names_lower:
                             exam_id = exam_names_lower[exam_name.lower()]
                         else:
+                            if not exam_name:
+                                st.error("Missing exam name. Go back one step and enter it.")
+                                st.stop()
                             created = create_folder(exam_name, subject_id)
                             exam_id = created["id"]
-        
                     if not exam_id:
                         st.error("Could not resolve Exam. Please go back and try again.")
                         st.stop()
         
-                    # TOPIC (always create here, prevent dup)
+                    # Topic: always create here (prevent dup)
                     topic_name = (st.session_state.get("qs_new_topic") or "").strip()
+                    if not topic_name:
+                        st.error("Missing topic name. Go back one step and enter it.")
+                        st.stop()
                     existing_topics = _children(list_folders(), exam_id)
                     if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
                         st.error("Topic already exists under this exam. Please choose a different name.")
@@ -877,13 +874,13 @@ with tabs[0]:
                         "HKDSE": "high school",
                         "Primary": "primary",
                     }
-                    audience      = aud_map.get(st.session_state.get("qs_audience_label", "University"), "high school")
-                    subject_hint  = st.session_state.get("qs_subject_hint", "General")
-                    detail        = st.session_state.get("qs_detail", 3)
-                    quiz_mode     = st.session_state.get("qs_quiz_mode", "Free response")
-                    mcq_options   = st.session_state.get("qs_mcq_opts", 4)
+                    audience     = aud_map.get(st.session_state.get("qs_audience_label", "University"), "high school")
+                    subject_hint = st.session_state.get("qs_subject_hint", "General")
+                    detail       = st.session_state.get("qs_detail", 3)
+                    quiz_mode    = st.session_state.get("qs_quiz_mode", "Free response")
+                    mcq_options  = st.session_state.get("qs_mcq_opts", 4)
         
-                    # ------- pipeline: extract -> summarize -> flashcards/quiz -> save -------
+                    # ------- pipeline -------
                     prog = st.progress(0, text="Starting…")
         
                     prog.progress(10, text="Extracting text…")
