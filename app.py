@@ -664,478 +664,232 @@ if "item" in params and "sb_user" in st.session_state:
             st.rerun()
     st.stop()
 
-# ---------------- Tabs ----------------
-view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
-default_idx = 2 if view == "all" else (1 if view == "resources" else 0)
-tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
+# ---------------- Router: open a specific tab by URL param ----------------
+_view_param = _get_params().get("view")
+view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
 
-# ===== Quick Study =====
-with tabs[0]:
-    st.title("⚡ Quick Study")
-    if "sb_user" not in st.session_state:
-        st.info("Log in to save your study materials.")
-    else:
-        # fresh folders (subject/exam/topic tree)
-        try:
-            ALL_FOLDERS = list_folders()
-        except Exception:
-            ALL_FOLDERS = []
-            st.warning("Could not load folders.")
-
-        def _roots(rows): return [r for r in rows if not r.get("parent_id")]  # subjects
-        subjects = _roots(ALL_FOLDERS)
-        subj_names = [s["name"] for s in subjects]
-
-        # ---- Subject ----
-        st.markdown("### Subject")
-        make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
-        subject_id = None
-        if make_new_subject:
-            new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
-            if st.button("Save subject", key="qs_save_subject_btn"):
-                name = (new_subject or "").strip()
-                if not name:
-                    st.warning("Enter a subject name.")
-                elif name.lower() in {n.lower() for n in subj_names}:
-                    st.error("This subject already exists. Please use a different name.")
-                else:
-                    create_folder(name, None)
-                    st.success("Subject created.")
-                    st.rerun()
-        else:
-            subj_pick = st.selectbox("Use existing subject", ["— select —"] + subj_names, key="qs_subject_pick")
-            if subj_pick in subj_names:
-                subject_id = next(s["id"] for s in subjects if s["name"] == subj_pick)
-
-        # ---- Exam ----
-        st.markdown("### Exam")
-        exam_id = None
-        if subject_id:
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
-            exam_names = [e["name"] for e in exams]
-            make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
-            if make_new_exam:
-                new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
-                if st.button("Save exam", key="qs_save_exam_btn"):
-                    name = (new_exam or "").strip()
-                    if not name:
-                        st.warning("Enter an exam name.")
-                    elif name.lower() in {n.lower() for n in exam_names}:
-                        st.error("This exam already exists under that subject.")
-                    else:
-                        create_folder(name, subject_id)
-                        st.success("Exam created.")
-                        st.rerun()
-            else:
-                ex_pick = st.selectbox("Use existing exam", ["— select —"] + exam_names, key="qs_exam_pick")
-                if ex_pick in exam_names:
-                    exam_id = next(e["id"] for e in exams if e["name"] == ex_pick)
-        else:
-            st.caption("Pick or create a Subject first to reveal Exams.")
-
-        # ---- Topic (free text; created during Generate) ----
-        st.markdown("### Topic")
-        topic_name_input = ""
-        if exam_id:
-            topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
-        else:
-            st.caption("Pick or create an Exam first to add a Topic.")
-
-        st.markdown("---")
-        st.markdown("**Subject (free text, improves accuracy & quality):**")
-        subject_hint = st.text_input(
-            "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
-            value=st.session_state.get("qs_subject_hint", "General"),
-            key="qs_subject_hint"
-        )
-
-        audience_label = st.selectbox(
-            "Audience", ["University", "A-Level", "IB", "GCSE", "HKDSE", "Primary"], index=0, key="qs_audience_label"
-        )
-        aud_map = {
-            "University": "university",
-            "A-Level": "A-Level",
-            "IB": "A-Level",
-            "GCSE": "high school",
-            "HKDSE": "high school",
-            "Primary": "primary",
-        }
-        audience = aud_map.get(audience_label, "high school")
-        detail = st.slider("Detail level", 1, 5, st.session_state.get("qs_detail", 3), key="qs_detail")
-
-        st.markdown("### Quiz type")
-        quiz_mode = st.radio(
-            "Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode"
-        )
-        mcq_options = 4
-        if quiz_mode == "Multiple choice":
-            mcq_options = st.slider("MCQ options per question", 3, 6, st.session_state.get("qs_mcq_opts", 4), key="qs_mcq_opts")
-
-        # --- Upload files (unchanged) ---
-        files = st.file_uploader(
-            "Upload files (PDF, PPTX, JPG, PNG, TXT)",
-            type=["pdf", "pptx", "jpg", "jpeg", "png", "txt"],
-            accept_multiple_files=True,
-            key="qs_files",
-        )
-        
-        # --- What to generate (new) ---
-        st.markdown("### What to generate")
-        sel_notes = st.checkbox("📄 Notes", value=True, key="qs_sel_notes")
-        sel_flash = st.checkbox("🧠 Flashcards", value=True, key="qs_sel_flash")
-        sel_quiz  = st.checkbox("🧪 Quiz", value=True, key="qs_sel_quiz")
-        
-        # ---- Gate the generate button ----
-        has_subject    = bool(subject_id or st.session_state.get("qs_new_subject"))
-        has_exam       = bool(exam_id or st.session_state.get("qs_new_exam"))
-        has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
-        has_files      = bool(files)
-        has_audience   = True  # already chosen above
-        has_selection  = sel_notes or sel_flash or sel_quiz
-        
-        can_generate = (
-            (subject_id is not None) and
-            (exam_id is not None) and
-            has_topic_text and
-            has_files and
-            has_audience and
-            has_selection
-        )
-        
-        gen_clicked = st.button(
-            "Generate",
-            type="primary",
-            key="qs_generate_btn",
-            disabled=not can_generate
-        )
-        
-        if gen_clicked and can_generate:
-            # Resolve destination folders freshly
-            subjects = _roots(list_folders())
-            subj_map = {s["name"]: s["id"] for s in subjects}
-            subject_id = subject_id or subj_map.get(st.session_state.get("qs_subject_pick"))
-        
-            exams = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
-            exam_map = {e["name"]: e["id"] for e in exams}
-            exam_id = exam_id or exam_map.get(st.session_state.get("qs_exam_pick"))
-        
-            # Create the topic now (and catch clashes)
-            topic_id = None
-            topic_name = (st.session_state.get("qs_new_topic") or "").strip()
-            if exam_id and topic_name:
-                existing_topics = [f for f in list_folders() if f.get("parent_id") == exam_id]
-                if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
-                    st.error("Topic already exists under this exam. Please choose a different name.")
-                    st.stop()
-                created = create_folder(topic_name, exam_id)
-                topic_id = created["id"]
-                topic_name = created["name"]
-        
-            dest_folder = topic_id or exam_id or subject_id or None
-        
-            # Base title (Topic > Exam > Subject > subject_hint)
-            base_title = (
-                topic_name
-                or (next((e["name"] for e in exams if e["id"] == exam_id), None) if exam_id else None)
-                or (next((s["name"] for s in subjects if s["id"] == subject_id), None) if subject_id else None)
-                or (subject_hint or "Study Pack")
-            )
-        
-            # Progress bar
-            prog = st.progress(0, text="Starting…")
-            try:
-                # 1) Extract text (always needed)
-                prog.progress(10, text="Extracting text…")
-                text = extract_any(files)
-                if not text.strip():
-                    st.error("No text detected in the uploaded files.")
-                    st.stop()
-        
-                # 2) Summarize into structured 'data' (we need this for notes / flashcards / quiz)
-                prog.progress(35, text="Summarising with AI…")
-                data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-        
-                # Prepare IDs
-                summary_id = None
-                flash_id   = None
-                quiz_id    = None
-        
-                # 3) Generate flashcards (if selected)
-                if sel_flash:
-                    prog.progress(55, text="Generating flashcards…")
-                    cards = []
-                    try:
-                        cards = generate_flashcards_from_notes(data, audience=audience)
-                    except Exception as e:
-                        st.warning(f"Flashcards skipped: {e}")
-                        cards = []
-        
-                # 4) Generate quiz (if selected)
-                if sel_quiz:
-                    prog.progress(70, text="Generating quiz…")
-                    qs = generate_quiz_from_notes(
-                        data,
-                        subject=subject_hint,
-                        audience=audience,
-                        num_questions=8,
-                        mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
-                        mcq_options=mcq_options,
-                    )
-                else:
-                    qs = None
-        
-                # 5) Save selected items
-                prog.progress(85, text="Saving selected items…")
-        
-                if sel_notes:
-                    title_notes = f"📄 {base_title} — Notes"
-                    summary = save_item("summary", title_notes, data, dest_folder)
-                    summary_id = summary.get("id")
-        
-                if sel_flash and 'cards' in locals() and cards:
-                    title_flash = f"🧠 {base_title} — Flashcards"
-                    flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
-                    flash_id = flash.get("id")
-        
-                if sel_quiz and qs:
-                    title_quiz = f"🧪 {base_title} — Quiz"
-                    quiz_payload = {"questions": qs}
-                    if quiz_mode == "Multiple choice":
-                        quiz_payload["type"] = "mcq"
-                        quiz_payload["mcq_options"] = mcq_options
-                    quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
-                    quiz_id = quiz_item.get("id")
-        
-                prog.progress(100, text="Done!")
-                st.success("Saved ✅")
-        
-                # Persist IDs for the next rerun so Open buttons work
-                st.session_state["qs_created_summary_id"] = summary_id or None
-                st.session_state["qs_created_flash_id"]   = flash_id or None
-                st.session_state["qs_created_quiz_id"]    = quiz_id or None
-        
-            except Exception as e:
-                st.error(f"Generation failed: {e}")
-        
-        # --- Always show 'Open' buttons for last generated items ---
-        sid = st.session_state.get("qs_created_summary_id")
-        fid = st.session_state.get("qs_created_flash_id")
-        qid = st.session_state.get("qs_created_quiz_id")
-        
-        if sid or fid or qid:
-            st.markdown("### Open")
-            c1, c2, c3 = st.columns(3)
-            if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
-                _set_params(item=sid, view="all"); st.rerun()
-            if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
-                _set_params(item=fid, view="all"); st.rerun()
-            if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-                _set_params(item=qid, view="all"); st.rerun()
-        
-
-# ===== Resources =====
-with tabs[1]:
+def render_resources_page():
     st.title("🧰 Resources")
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
+        return
+
+    try:
+        ALL_FOLDERS = list_folders()
+    except:
+        pass
+
+    # ---- SUBJECT row (inline actions) ----
+    subjects = [r for r in ALL_FOLDERS if not r.get("parent_id")]
+    subj_names = [s["name"] for s in subjects]
+    csubj1, csubj2, csubj3 = st.columns([3, 0.9, 0.9])
+    subj_pick = csubj1.selectbox("Subject", ["— select —"] + subj_names, key="res_subj_pick")
+    subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
+
+    if subj_id:
+        if csubj2.button("Rename", key="rn_subj_btn", use_container_width=True):
+            st.session_state["rn_subj_mode"] = True
+        if csubj3.button("Delete", key="del_subj_btn", use_container_width=True):
+            st.session_state["del_subj_confirm"] = True
+
+        if st.session_state.get("rn_subj_mode"):
+            newn = st.text_input("New subject name", value=subj_pick, key="rn_subj_name")
+            rc1, rc2 = st.columns([1, 1])
+            if rc1.button("Save", key="rn_subj_save"):
+                try:
+                    rename_folder(subj_id, (newn or "").strip())
+                    st.session_state.pop("rn_subj_mode", None)
+                    st.success("Subject renamed."); st.rerun()
+                except Exception as e:
+                    st.error(f"Rename failed: {e}")
+            if rc2.button("Cancel", key="rn_subj_cancel"):
+                st.session_state.pop("rn_subj_mode", None); st.rerun()
+
+        if st.session_state.get("del_subj_confirm"):
+            st.warning("Delete this subject and all nested exams/topics/items? This cannot be undone.")
+            dc1, dc2 = st.columns(2)
+            if dc1.button("Confirm delete", type="primary", key="del_subj_yes"):
+                try:
+                    delete_folder(subj_id)
+                    st.session_state.pop("del_subj_confirm", None)
+                    st.success("Subject deleted."); st.rerun()
+                except Exception as e:
+                    st.error(f"Delete failed: {e}")
+            if dc2.button("Cancel", key="del_subj_no"):
+                st.session_state.pop("del_subj_confirm", None); st.rerun()
     else:
-        try:
-            ALL_FOLDERS = list_folders()
-        except:
-            pass
+        st.caption("Pick a Subject to reveal Exams.")
 
-        # ---- SUBJECT row (inline actions) ----
-        subjects = [r for r in ALL_FOLDERS if not r.get("parent_id")]
-        subj_names = [s["name"] for s in subjects]
-        csubj1, csubj2, csubj3 = st.columns([3, 0.9, 0.9])
-        subj_pick = csubj1.selectbox("Subject", ["— select —"] + subj_names, key="res_subj_pick")
-        subj_id = next((s["id"] for s in subjects if s["name"]==subj_pick), None) if subj_pick in subj_names else None
+    # ---- EXAM row (inline actions) ----
+    exam_id = None
+    if subj_id:
+        exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj_id]
+        ex_names = [e["name"] for e in exams]
+        cex1, cex2, cex3 = st.columns([3, 0.9, 0.9])
+        ex_pick = cex1.selectbox("Exam", ["— select —"] + ex_names, key="res_exam_pick")
+        exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in ex_names else None
 
-        if subj_id:
-            if csubj2.button("Rename", key="rn_subj_btn", use_container_width=True):
-                st.session_state["rn_subj_mode"] = True
-            if csubj3.button("Delete", key="del_subj_btn", use_container_width=True):
-                st.session_state["del_subj_confirm"] = True
+        if exam_id:
+            if cex2.button("Rename", key="rn_exam_btn", use_container_width=True):
+                st.session_state["rn_exam_mode"] = True
+            if cex3.button("Delete", key="del_exam_btn", use_container_width=True):
+                st.session_state["del_exam_confirm"] = True
 
-            if st.session_state.get("rn_subj_mode"):
-                newn = st.text_input("New subject name", value=subj_pick, key="rn_subj_name")
-                rc1, rc2 = st.columns([1, 1])
-                if rc1.button("Save", key="rn_subj_save"):
+            if st.session_state.get("rn_exam_mode"):
+                newn = st.text_input("New exam name", value=ex_pick, key="rn_exam_name")
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Save", key="rn_exam_save"):
                     try:
-                        rename_folder(subj_id, (newn or "").strip())
-                        st.session_state.pop("rn_subj_mode", None)
-                        st.success("Subject renamed.")
-                        st.rerun()
+                        rename_folder(exam_id, (newn or "").strip())
+                        st.session_state.pop("rn_exam_mode", None)
+                        st.success("Exam renamed."); st.rerun()
                     except Exception as e:
                         st.error(f"Rename failed: {e}")
-                if rc2.button("Cancel", key="rn_subj_cancel"):
-                    st.session_state.pop("rn_subj_mode", None); st.rerun()
+                if rc2.button("Cancel", key="rn_exam_cancel"):
+                    st.session_state.pop("rn_exam_mode", None); st.rerun()
 
-            if st.session_state.get("del_subj_confirm"):
-                st.warning("Delete this subject and all nested exams/topics/items? This cannot be undone.")
+            if st.session_state.get("del_exam_confirm"):
+                st.warning("Delete this exam and all nested topics/items? This cannot be undone.")
                 dc1, dc2 = st.columns(2)
-                if dc1.button("Confirm delete", type="primary", key="del_subj_yes"):
+                if dc1.button("Confirm delete", type="primary", key="del_exam_yes"):
                     try:
-                        delete_folder(subj_id)
-                        st.session_state.pop("del_subj_confirm", None)
-                        st.success("Subject deleted."); st.rerun()
+                        delete_folder(exam_id)
+                        st.session_state.pop("del_exam_confirm", None)
+                        st.success("Exam deleted."); st.rerun()
                     except Exception as e:
                         st.error(f"Delete failed: {e}")
-                if dc2.button("Cancel", key="del_subj_no"):
-                    st.session_state.pop("del_subj_confirm", None); st.rerun()
-        else:
-            st.caption("Pick a Subject to reveal Exams.")
-
-        # ---- EXAM row (inline actions) ----
-        exam_id = None
-        if subj_id:
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subj_id]
-            ex_names = [e["name"] for e in exams]
-            cex1, cex2, cex3 = st.columns([3, 0.9, 0.9])
-            ex_pick = cex1.selectbox("Exam", ["— select —"] + ex_names, key="res_exam_pick")
-            exam_id = next((e["id"] for e in exams if e["name"]==ex_pick), None) if ex_pick in ex_names else None
-
-            if exam_id:
-                if cex2.button("Rename", key="rn_exam_btn", use_container_width=True):
-                    st.session_state["rn_exam_mode"] = True
-                if cex3.button("Delete", key="del_exam_btn", use_container_width=True):
-                    st.session_state["del_exam_confirm"] = True
-
-                if st.session_state.get("rn_exam_mode"):
-                    newn = st.text_input("New exam name", value=ex_pick, key="rn_exam_name")
-                    rc1, rc2 = st.columns(2)
-                    if rc1.button("Save", key="rn_exam_save"):
-                        try:
-                            rename_folder(exam_id, (newn or "").strip())
-                            st.session_state.pop("rn_exam_mode", None)
-                            st.success("Exam renamed."); st.rerun()
-                        except Exception as e:
-                            st.error(f"Rename failed: {e}")
-                    if rc2.button("Cancel", key="rn_exam_cancel"):
-                        st.session_state.pop("rn_exam_mode", None); st.rerun()
-
-                if st.session_state.get("del_exam_confirm"):
-                    st.warning("Delete this exam and all nested topics/items? This cannot be undone.")
-                    dc1, dc2 = st.columns(2)
-                    if dc1.button("Confirm delete", type="primary", key="del_exam_yes"):
-                        try:
-                            delete_folder(exam_id)
-                            st.session_state.pop("del_exam_confirm", None)
-                            st.success("Exam deleted."); st.rerun()
-                        except Exception as e:
-                            st.error(f"Delete failed: {e}")
-                    if dc2.button("Cancel", key="del_exam_no"):
-                        st.session_state.pop("del_exam_confirm", None); st.rerun()
-        else:
-            st.caption("Pick a Subject to reveal Exams.")
-
-        # ---- TOPIC row (inline actions) ----
-        topic_id = None
-        if exam_id:
-            topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
-            tp_names = [t["name"] for t in topics]
-            ctp1, ctp2, ctp3 = st.columns([3, 0.9, 0.9])
-            tp_pick = ctp1.selectbox("Topic", ["— select —"] + tp_names, key="res_topic_pick")
-            topic_id = next((t["id"] for t in topics if t["name"]==tp_pick), None) if tp_pick in tp_names else None
-
-            if topic_id:
-                if ctp2.button("Rename", key="rn_topic_btn", use_container_width=True):
-                    st.session_state["rn_topic_mode"] = True
-                if ctp3.button("Delete", key="del_topic_btn", use_container_width=True):
-                    st.session_state["del_topic_confirm"] = True
-
-                if st.session_state.get("rn_topic_mode"):
-                    newn = st.text_input("New topic name", value=tp_pick, key="rn_topic_name")
-                    rc1, rc2 = st.columns(2)
-                    if rc1.button("Save", key="rn_topic_save"):
-                        try:
-                            rename_folder(topic_id, (newn or "").strip())
-                            st.session_state.pop("rn_topic_mode", None)
-                            st.success("Topic renamed."); st.rerun()
-                        except Exception as e:
-                            st.error(f"Rename failed: {e}")
-                    if rc2.button("Cancel", key="rn_topic_cancel"):
-                        st.session_state.pop("rn_topic_mode", None); st.rerun()
-
-                if st.session_state.get("del_topic_confirm"):
-                    st.warning("Delete this topic and all items? This cannot be undone.")
-                    dc1, dc2 = st.columns(2)
-                    if dc1.button("Confirm delete", type="primary", key="del_topic_yes"):
-                        try:
-                            delete_folder(topic_id)
-                            st.session_state.pop("del_topic_confirm", None)
-                            st.success("Topic deleted."); st.rerun()
-                        except Exception as e:
-                            st.error(f"Delete failed: {e}")
-                    if dc2.button("Cancel", key="del_topic_no"):
-                        st.session_state.pop("del_topic_confirm", None); st.rerun()
-        else:
-            st.caption("Pick an Exam to reveal Topics.")
-
-        # Items inside Topic (neat buttons)
-        if topic_id:
-            st.progress(compute_topic_progress(topic_id), text="Topic progress")
-            emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-            try: items = list_items(topic_id, limit=200)
-            except: items = []
-            st.subheader("Resources in topic")
-            if not items: st.caption("No items yet.")
-            for it in items:
-                icon = emoji.get(it["kind"], "📄")
-                c0, c1, c2, c3 = st.columns([8,1.2,1.2,1.2])
-                c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
-                with c1:
-                    if st.button("Open", key=f"res_open_{it['id']}", use_container_width=True):
-                        _set_params(item=it["id"], view="all"); st.rerun()
-                with c2:
-                    if not st.session_state.get(f"edit_item_{it['id']}", False):
-                        if st.button("Rename", key=f"res_btn_rename_{it['id']}", use_container_width=True):
-                            st.session_state[f"edit_item_{it['id']}"]=True; st.rerun()
-                    else:
-                        newt = st.text_input("New title", value=it["title"], key=f"res_rn_{it['id']}")
-                        s1,s2 = st.columns(2)
-                        if s1.button("Save", key=f"res_save_{it['id']}"):
-                            try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
-                            except Exception as e: st.error(f"Rename failed: {e}")
-                        if s2.button("Cancel", key=f"res_cancel_{it['id']}"):
-                            st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
-                with c3:
-                    if st.button("Delete", key=f"res_del_{it['id']}", use_container_width=True):
-                        try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
-                        except Exception as e: st.error(f"Delete failed: {e}")
-
-# ===== All Resources (newest) =====
-with tabs[2]:
-    st.title("🗂️ All Resources (Newest)")
-    if "sb_user" not in st.session_state:
-        st.info("Log in to view your resources.")
+                if dc2.button("Cancel", key="del_exam_no"):
+                    st.session_state.pop("del_exam_confirm", None); st.rerun()
     else:
+        st.caption("Pick a Subject to reveal Exams.")
+
+    # ---- TOPIC row (inline actions) ----
+    topic_id = None
+    if exam_id:
+        topics = [f for f in ALL_FOLDERS if f.get("parent_id")==exam_id]
+        tp_names = [t["name"] for t in topics]
+        ctp1, ctp2, ctp3 = st.columns([3, 0.9, 0.9])
+        tp_pick = ctp1.selectbox("Topic", ["— select —"] + tp_names, key="res_topic_pick")
+        topic_id = next((t["id"] for t in topics if t["name"]==tp_pick), None) if tp_pick in tp_names else None
+
+        if topic_id:
+            if ctp2.button("Rename", key="rn_topic_btn", use_container_width=True):
+                st.session_state["rn_topic_mode"] = True
+            if ctp3.button("Delete", key="del_topic_btn", use_container_width=True):
+                st.session_state["del_topic_confirm"] = True
+
+            if st.session_state.get("rn_topic_mode"):
+                newn = st.text_input("New topic name", value=tp_pick, key="rn_topic_name")
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Save", key="rn_topic_save"):
+                    try:
+                        rename_folder(topic_id, (newn or "").strip())
+                        st.session_state.pop("rn_topic_mode", None)
+                        st.success("Topic renamed."); st.rerun()
+                    except Exception as e:
+                        st.error(f"Rename failed: {e}")
+                if rc2.button("Cancel", key="rn_topic_cancel"):
+                    st.session_state.pop("rn_topic_mode", None); st.rerun()
+
+            if st.session_state.get("del_topic_confirm"):
+                st.warning("Delete this topic and all items? This cannot be undone.")
+                dc1, dc2 = st.columns(2)
+                if dc1.button("Confirm delete", type="primary", key="del_topic_yes"):
+                    try:
+                        delete_folder(topic_id)
+                        st.session_state.pop("del_topic_confirm", None)
+                        st.success("Topic deleted."); st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+                if dc2.button("Cancel", key="del_topic_no"):
+                    st.session_state.pop("del_topic_confirm", None); st.rerun()
+    else:
+        st.caption("Pick an Exam to reveal Topics.")
+
+    # Items inside Topic (neat buttons)
+    if topic_id:
+        st.progress(compute_topic_progress(topic_id), text="Topic progress")
         emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-        try: all_items = list_items(None, limit=1000)
-        except: all_items = []
-        all_items.sort(key=lambda x: x.get("created_at",""), reverse=True)
-        if not all_items: st.caption("Nothing yet — create something in Quick Study!")
-        for it in all_items:
+        try: items = list_items(topic_id, limit=200)
+        except: items = []
+        st.subheader("Resources in topic")
+        if not items: st.caption("No items yet.")
+        for it in items:
             icon = emoji.get(it["kind"], "📄")
             c0, c1, c2, c3 = st.columns([8,1.2,1.2,1.2])
             c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
             with c1:
-                if st.button("Open", key=f"all_open_{it['id']}", use_container_width=True):
-                    _set_params(item=it['id'], view="all"); st.rerun()
+                if st.button("Open", key=f"res_open_{it['id']}", use_container_width=True):
+                    _set_params(item=it["id"], view="resources"); st.rerun()
             with c2:
-                if not st.session_state.get(f"edit_item_all_{it['id']}", False):
-                    if st.button("Rename", key=f"all_btn_rename_{it['id']}", use_container_width=True):
-                        st.session_state[f"edit_item_all_{it['id']}"]=True; st.rerun()
+                if not st.session_state.get(f"edit_item_{it['id']}", False):
+                    if st.button("Rename", key=f"res_btn_rename_{it['id']}", use_container_width=True):
+                        st.session_state[f"edit_item_{it['id']}"]=True; st.rerun()
                 else:
-                    newt = st.text_input("New title", value=it["title"], key=f"all_rn_{it['id']}")
+                    newt = st.text_input("New title", value=it["title"], key=f"res_rn_{it['id']}")
                     s1,s2 = st.columns(2)
-                    if s1.button("Save", key=f"all_save_{it['id']}"):
-                        try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
+                    if s1.button("Save", key=f"res_save_{it['id']}"):
+                        try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
                         except Exception as e: st.error(f"Rename failed: {e}")
-                    if s2.button("Cancel", key=f"all_cancel_{it['id']}"):
-                        st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
+                    if s2.button("Cancel", key=f"res_cancel_{it['id']}"):
+                        st.session_state[f"edit_item_{it['id']}"]=False; st.rerun()
             with c3:
-                if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
+                if st.button("Delete", key=f"res_del_{it['id']}", use_container_width=True):
                     try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                     except Exception as e: st.error(f"Delete failed: {e}")
+
+def render_all_resources_page():
+    st.title("🗂️ All Resources (Newest)")
+    if "sb_user" not in st.session_state:
+        st.info("Log in to view your resources."); return
+    emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
+    try: all_items = list_items(None, limit=1000)
+    except: all_items = []
+    all_items.sort(key=lambda x: x.get("created_at",""), reverse=True)
+    if not all_items: st.caption("Nothing yet — create something in Quick Study!")
+    for it in all_items:
+        icon = emoji.get(it["kind"], "📄")
+        c0, c1, c2, c3 = st.columns([8,1.2,1.2,1.2])
+        c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
+        with c1:
+            if st.button("Open", key=f"all_open_{it['id']}", use_container_width=True):
+                _set_params(item=it['id'], view="resources"); st.rerun()
+        with c2:
+            if not st.session_state.get(f"edit_item_all_{it['id']}", False):
+                if st.button("Rename", key=f"all_btn_rename_{it['id']}", use_container_width=True):
+                    st.session_state[f"edit_item_all_{it['id']}"]=True; st.rerun()
+            else:
+                newt = st.text_input("New title", value=it["title"], key=f"all_rn_{it['id']}")
+                s1,s2 = st.columns(2)
+                if s1.button("Save", key=f"all_save_{it['id']}"):
+                    try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
+                    except Exception as e: st.error(f"Rename failed: {e}")
+                if s2.button("Cancel", key=f"all_cancel_{it['id']}"):
+                    st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
+        with c3:
+            if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
+                try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
+                except Exception as e: st.error(f"Delete failed: {e}")
+
+# If a view is requested, render that page directly and stop
+if view_param == "resources":
+    render_resources_page(); st.stop()
+elif view_param == "all":
+    render_all_resources_page(); st.stop()
+
+# Otherwise, show the full three-tab UI (default)
+tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
+
+# ===== Quick Study =====
+with tabs[0]:
+    # (keep your existing Quick Study code here, unchanged)
+
+# ===== Resources =====
+with tabs[1]:
+    render_resources_page()
+
+# ===== All Resources (newest) =====
+with tabs[2]:
+    render_all_resources_page()
+
 
