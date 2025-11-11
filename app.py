@@ -492,51 +492,136 @@ def render_summary(data: dict):
 
 def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, key_prefix="fc"):
     st.subheader("🧠 Flashcards")
-    if not flashcards: st.caption("No flashcards found."); return
-    st.session_state.setdefault(f"{key_prefix}_idx",0)
-    st.session_state.setdefault(f"{key_prefix}_revealed",False)
+    if not flashcards:
+        st.caption("No flashcards found.")
+        return
+
+    # ---------- Session state ----------
+    # Full queue of remaining indices (we'll pop from here), but keep a fixed total.
     st.session_state.setdefault(f"{key_prefix}_order", list(range(len(flashcards))))
-    st.session_state.setdefault(f"{key_prefix}_wrong_counts",{})
+    st.session_state.setdefault(f"{key_prefix}_revealed", False)
+    st.session_state.setdefault(f"{key_prefix}_total", len(flashcards))
+    st.session_state.setdefault(f"{key_prefix}_known_set", set())   # unique known card indices
+    st.session_state.setdefault(f"{key_prefix}_again_set", set())   # unique "don't know" indices
+    st.session_state.setdefault(f"{key_prefix}_idx", 0)             # pointer in current order
+
     order = st.session_state[f"{key_prefix}_order"]
+    total = st.session_state[f"{key_prefix}_total"]
+    known_set: set = st.session_state[f"{key_prefix}_known_set"]
+    again_set: set = st.session_state[f"{key_prefix}_again_set"]
+    revealed = st.session_state[f"{key_prefix}_revealed"]
+
+    # If the queue is empty, we're done
     if not order:
+        known = len(known_set)
+        dontknow = len(again_set - known_set)  # anything not later upgraded to known
         st.success("Deck complete — nice work!")
+        st.metric("Known", f"{known}/{total}")
+        st.metric("Don't know", f"{dontknow}/{total}")
+        # Completion bar (100%)
+        st.progress(1.0, text="Complete")
         if st.button("🔁 Restart", key=f"{key_prefix}_restart_all"):
-            st.session_state[f"{key_prefix}_order"]=list(range(len(flashcards)))
-            st.session_state[f"{key_prefix}_idx"]=0
-            st.session_state[f"{key_prefix}_revealed"]=False
-            st.session_state[f"{key_prefix}_wrong_counts"]={}
+            st.session_state[f"{key_prefix}_order"] = list(range(total))
+            st.session_state[f"{key_prefix}_revealed"] = False
+            st.session_state[f"{key_prefix}_idx"] = 0
+            st.session_state[f"{key_prefix}_known_set"] = set()
+            st.session_state[f"{key_prefix}_again_set"] = set()
             st.rerun()
         return
-    idx = st.session_state[f"{key_prefix}_idx"]; idx = max(0, min(idx, len(order)-1))
-    st.session_state[f"{key_prefix}_idx"]=idx
-    revealed = st.session_state[f"{key_prefix}_revealed"]; wrong = st.session_state[f"{key_prefix}_wrong_counts"]
-    st.progress((idx+1)/len(order), text=f"Card {idx+1}/{len(order)}")
-    orig_i = order[idx]; card = flashcards[orig_i]
-    st.markdown("#### Front"); st.info(card.get("front",""))
-    if revealed: st.markdown("#### Back"); st.success(card.get("back",""))
-    c1,c2,c3,c4 = st.columns(4)
-    if c1.button("◀️ Prev", disabled=(idx==0), key=f"{key_prefix}_prev"):
-        st.session_state[f"{key_prefix}_idx"]=idx-1; st.session_state[f"{key_prefix}_revealed"]=False; st.rerun()
-    if c2.button("🔁 Flip", key=f"{key_prefix}_flip"):
-        st.session_state[f"{key_prefix}_revealed"]=not revealed; st.rerun()
-    if c3.button("✅ Knew it", key=f"{key_prefix}_ok"):
-        if item_id and "sb_user" in st.session_state:
-            try: save_flash_review(item_id, True)
-            except: pass
-        st.session_state[f"{key_prefix}_order"].pop(idx)
-        st.session_state[f"{key_prefix}_revealed"]=False
-        if idx >= len(st.session_state[f"{key_prefix}_order"]): st.session_state[f"{key_prefix}_idx"]=max(0,len(st.session_state[f"{key_prefix}_order"])-1)
+
+    # Clamp idx to valid range
+    idx = st.session_state[f"{key_prefix}_idx"]
+    if idx >= len(order): idx = len(order) - 1
+    if idx < 0: idx = 0
+    st.session_state[f"{key_prefix}_idx"] = idx
+
+    # Current card
+    orig_i = order[idx]
+    card = flashcards[orig_i]
+
+    # ---------- Progress ----------
+    # "Done" = how many unique cards have been judged (known or again at least once)
+    judged = len(known_set | again_set)
+    # Current position number should be judged + 1 (the one we're currently on),
+    # but cap at total (when returning to old cards).
+    current_num = min(judged + 1, total)
+    # Top progress bar: overall completion (judged / total)
+    st.progress(judged / max(1, total), text=f"Card {current_num}/{total}")
+    # Small stats row
+    cstat1, cstat2, cstat3 = st.columns(3)
+    with cstat1:
+        st.metric("Known", f"{len(known_set)}/{total}")
+    with cstat2:
+        st.metric("Don't know", f"{len(again_set - known_set)}/{total}")
+    with cstat3:
+        st.metric("Remaining", f"{total - len(known_set | again_set)}")
+
+    # ---------- Card UI ----------
+    st.markdown("#### Front")
+    st.info(card.get("front", ""))
+    if revealed:
+        st.markdown("#### Back")
+        st.success(card.get("back", ""))
+
+    # ---------- Controls ----------
+    c1, c2, c3, c4 = st.columns(4)
+
+    # Prev: move pointer back within current queue (doesn't change judged counts)
+    if c1.button("◀️ Prev", disabled=(idx == 0), key=f"{key_prefix}_prev"):
+        st.session_state[f"{key_prefix}_idx"] = max(0, idx - 1)
+        st.session_state[f"{key_prefix}_revealed"] = False
         st.rerun()
-    if c4.button("❌ Again", key=f"{key_prefix}_bad"):
+
+    # Flip
+    if c2.button("🔁 Flip", key=f"{key_prefix}_flip"):
+        st.session_state[f"{key_prefix}_revealed"] = not revealed
+        st.rerun()
+
+    # Known
+    if c3.button("✅ Knew it", key=f"{key_prefix}_ok"):
+        # If this card had previously been "again", upgrade it to known
+        if orig_i in again_set:
+            again_set.discard(orig_i)
+        known_set.add(orig_i)
+
+        # Optional: persist a positive review
         if item_id and "sb_user" in st.session_state:
-            try: save_flash_review(item_id, False)
-            except: pass
-        cnt = wrong.get(orig_i,0)
-        if cnt < 2:
-            st.session_state[f"{key_prefix}_order"].insert(min(len(order), idx+4), orig_i)
-            wrong[orig_i]=cnt+1
-        st.session_state[f"{key_prefix}_revealed"]=False
-        if idx < len(st.session_state[f"{key_prefix}_order"])-1: st.session_state[f"{key_prefix}_idx"]=idx+1
+            try:
+                save_flash_review(item_id, True)
+            except Exception:
+                pass
+
+        # Remove this card from the queue so we don't see it again this run
+        order.pop(idx)
+        # Keep pointer on next card (same idx now points to the following card)
+        if idx >= len(order):
+            st.session_state[f"{key_prefix}_idx"] = max(0, len(order) - 1)
+        st.session_state[f"{key_prefix}_revealed"] = False
+        st.rerun()
+
+    # Again
+    if c4.button("❌ Again", key=f"{key_prefix}_bad"):
+        # Count once (unique). If later "Known", we'll move it.
+        if orig_i not in known_set:
+            again_set.add(orig_i)
+
+        # Optional: persist a negative review
+        if item_id and "sb_user" in st.session_state:
+            try:
+                save_flash_review(item_id, False)
+            except Exception:
+                pass
+
+        # Re-queue this card a few ahead (spaced repetition lite)
+        # Move pointer to next and insert this index again later
+        order.pop(idx)
+        insert_at = min(len(order), idx + 4)
+        order.insert(insert_at, orig_i)
+
+        # Pointer stays at same idx to show the next card
+        if idx >= len(order):
+            st.session_state[f"{key_prefix}_idx"] = max(0, len(order) - 1)
+        st.session_state[f"{key_prefix}_revealed"] = False
         st.rerun()
 
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
