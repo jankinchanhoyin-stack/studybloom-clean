@@ -54,13 +54,28 @@ def _fetch_user_from_token(access_token: str) -> Optional[dict]:
         pass
     return None
 
+# --- Write pending cookies (set by login dialog) BEFORE restore ---
+if cookies and st.session_state.get("pending_cookie_token"):
+    cookies["sb_access"] = st.session_state.pop("pending_cookie_token") or ""
+    cookies["sb_email"]  = st.session_state.pop("pending_cookie_email", "") or ""
+    cookies.save()
+    # if we had a 'just_logged_out' guard lingering, clear it
+    st.session_state.pop("just_logged_out", None)
+
 # Restore session from cookie if present (BEFORE any auto-prompt)
-if "sb_user" not in st.session_state and cookies:
-    tok = cookies.get("sb_access")
+if "sb_user" not in st.session_state and cookies and not st.session_state.get("just_logged_out"):
+    tok = cookies.get("sb_access") or ""
     if tok:
         user = _fetch_user_from_token(tok)
         if user:
             st.session_state["sb_user"] = {"user": user, "access_token": tok}
+
+# clear the guard after we pass the restore point
+if st.session_state.get("just_logged_out"):
+    st.session_state.pop("just_logged_out")
+
+
+
 
 # ---------------- Query helpers (needed by top bar) ----------------
 def _get_params() -> Dict[str, str]:
@@ -119,17 +134,30 @@ if st_dialog:
         c1, c2 = st.columns(2)
         if c1.button("Sign in", type="primary", key="dlg_login_btn"):
             try:
-                sign_in(email, pwd)  # sets st.session_state["sb_user"]
-                if remember and cookies and "sb_user" in st.session_state:
-                    tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
-                    if tok:
-                        cookies["sb_access"] = tok
-                        cookies["sb_email"] = email or ""
-                        cookies.save()
+                # Capture the response for a reliable token source
+                sess = sign_in(email, pwd)  # make sure auth_rest.sign_in returns the session dict
+                # Try multiple spots for the token
+                token = (
+                    (st.session_state.get("sb_user") or {}).get("access_token")
+                    or (st.session_state.get("sb_user") or {}).get("session", {}).get("access_token")
+                    or (sess or {}).get("access_token")
+                    or (sess or {}).get("session", {}).get("access_token")
+                )
+        
+                # Prefer writing via the top-level hook (works even if cookies is None here)
+                if remember:
+                    st.session_state["pending_cookie_token"] = token or ""
+                    st.session_state["pending_cookie_email"] = email or ""
+        
+                # Mark we handled auth so we don't pop the dialog again
                 st.session_state["auth_prompted"] = True
+                # Defensive: clear any logout guard
+                st.session_state.pop("just_logged_out", None)
+        
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
+
         if c2.button("Sign Up", key="dlg_to_signup"):
             st.session_state["want_dialog"] = "signup"
             st.rerun()
