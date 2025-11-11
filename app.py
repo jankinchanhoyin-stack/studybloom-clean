@@ -1443,11 +1443,11 @@ else:
         subjects = _roots(list_folders())
         subj_map = {s["name"]: s["id"] for s in subjects}
         subject_id = subject_id or subj_map.get(st.session_state.get("qs_subject_pick"))
-
+    
         exams = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
         exam_map = {e["name"]: e["id"] for e in exams}
         exam_id = exam_id or exam_map.get(st.session_state.get("qs_exam_pick"))
-
+    
         topic_id = None
         topic_name = (st.session_state.get("qs_new_topic") or "").strip()
         if exam_id and topic_name:
@@ -1458,7 +1458,7 @@ else:
             created = create_folder(topic_name, exam_id)
             topic_id = created["id"]
             topic_name = created["name"]
-
+    
         dest_folder = topic_id or exam_id or subject_id or None
         base_title = (
             topic_name
@@ -1466,43 +1466,46 @@ else:
             or (next((s["name"] for s in subjects if s["id"] == subject_id), None) if subject_id else None)
             or (subject_hint or "Study Pack")
         )
-
+    
         prog = st.progress(0, text="Starting…")
         try:
             prog.progress(10, text="Extracting text…")
-    text = extract_any(files)
-    if not text.strip():
-        st.error("No text detected in the uploaded files.")
-        st.stop()
+            text = extract_any(files)
+            if not text.strip():
+                st.error("No text detected in the uploaded files.")
+                st.stop()
     
-    # Decide sizes automatically from text length + detail + quiz mode
-    auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
+            # Decide sizes automatically from text length + detail + quiz mode
+            auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
     
-    prog.progress(35, text=f"Summarising with AI…")
-    data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
+            prog.progress(35, text=f"Summarising with AI…")
+            data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
     
-    summary_id = flash_id = quiz_id = None
+            summary_id = flash_id = quiz_id = None
     
-    if sel_flash:
-        prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
-        try:
-            cards = generate_flashcards_from_notes(data, audience=audience, target_count=auto_fc)
-        except Exception as e:
-            st.warning(f"Flashcards skipped: {e}")
-            cards = []
+            if sel_flash:
+                prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
+                try:
+                    cards = generate_flashcards_from_notes(
+                        data, audience=audience, target_count=auto_fc
+                    )
+                except Exception as e:
+                    st.warning(f"Flashcards skipped: {e}")
+                    cards = []
     
-    if sel_quiz:
-        prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
-        qs = generate_quiz_from_notes(
-            data,
-            subject=subject_hint,
-            audience=audience,
-            num_questions=auto_qs,
-            mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
-            mcq_options=mcq_options,
-        )
-    else:
-        qs = None
+            if sel_quiz:
+                prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
+                qs = generate_quiz_from_notes(
+                    data,
+                    subject=subject_hint,
+                    audience=audience,
+                    num_questions=auto_qs,
+                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+                    mcq_options=mcq_options,
+                )
+            else:
+                qs = None
+    
 
             prog.progress(85, text="Saving selected items…")
 
