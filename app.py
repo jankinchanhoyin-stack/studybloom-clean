@@ -209,10 +209,7 @@ def _topbar():
                     st.session_state["want_dialog"] = "signup"
                     st.rerun()
         else:
-            with b1:
-                if st.button("👤", key="top_profile", help="View your account"):
-                    _set_params(view="account")
-                    st.rerun()
+            1=1
 _topbar()
 st.divider()
 
