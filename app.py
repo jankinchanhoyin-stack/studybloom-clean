@@ -84,7 +84,7 @@ from auth_rest import (
     # auth + items + folders
     sign_in, sign_up, sign_out,
     save_item, list_items, get_item, move_item, delete_item,
-    create_folder, list_folders, delete_folder, list_child_folders,
+    create_folder, list_folders, delete_folder,
 
     # quiz/flash progress
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
