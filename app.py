@@ -395,6 +395,78 @@ def compute_topic_progress(topic_folder_id: str) -> float:
     except Exception:
         return 0.0
 
+from typing import Dict, List, Optional
+
+def compute_topic_stats(topic_id: Optional[str]) -> Dict[str, float]:
+    """
+    Aggregates latest quiz performance and flashcard 'known' ratio for a topic.
+    Returns:
+      progress   : blended 0..1 (60% quiz avg + 40% flash known)
+      quiz_avg   : latest-per-quiz average percent (0..1)
+      quiz_count : number of quizzes counted
+      flash_known: share of reviews marked 'known' (0..1)
+      flash_reviews: number of flash reviews counted
+    """
+    if not topic_id:
+        return {"progress": 0.0, "quiz_avg": 0.0, "quiz_count": 0,
+                "flash_known": 0.0, "flash_reviews": 0}
+
+    try:
+        items = list_items(topic_id, limit=500)
+    except Exception:
+        items = []
+
+    quiz_ids  = [it["id"] for it in items if it.get("kind") == "quiz"]
+    flash_ids = [it["id"] for it in items if it.get("kind") == "flashcards"]
+
+    # ---- Quiz: take the latest attempt per quiz, then average their % scores
+    quiz_avg = 0.0
+    quiz_count = 0
+    if quiz_ids:
+        try:
+            attempts = list_quiz_attempts_for_items(quiz_ids)  # multiple rows per quiz
+        except Exception:
+            attempts = []
+
+        latest_by_quiz: Dict[str, dict] = {}
+        for at in attempts:
+            iid = at.get("item_id")
+            if not iid:
+                continue
+            if (iid not in latest_by_quiz) or (at.get("created_at", "") > latest_by_quiz[iid].get("created_at", "")):
+                latest_by_quiz[iid] = at
+
+        if latest_by_quiz:
+            pct_values: List[float] = []
+            for a in latest_by_quiz.values():
+                c, t = a.get("correct", 0), a.get("total", 0)
+                pct_values.append((c / t) if t else 0.0)
+            quiz_count = len(pct_values)
+            quiz_avg = sum(pct_values) / quiz_count if quiz_count else 0.0
+
+    # ---- Flashcards: overall known ratio across reviews
+    flash_known = 0.0
+    flash_reviews = 0
+    if flash_ids:
+        try:
+            reviews = list_flash_reviews_for_items(flash_ids)
+        except Exception:
+            reviews = []
+        flash_reviews = len(reviews)
+        if flash_reviews:
+            flash_known = sum(1 for r in reviews if r.get("known")) / flash_reviews
+
+    progress = 0.6 * quiz_avg + 0.4 * flash_known
+    return {
+        "progress": progress,
+        "quiz_avg": quiz_avg,
+        "quiz_count": quiz_count,
+        "flash_known": flash_known,
+        "flash_reviews": flash_reviews,
+    }
+
+
+
 # ---------------- Renderers ----------------
 def render_summary(data: dict):
     st.subheader("📝 Notes")
@@ -754,6 +826,12 @@ def render_resources_page():
     
         name = folder.get("name", "Untitled")
         when = (folder.get("created_at", "")[:16].replace("T", " "))
+        if level == "topic":
+            try:
+                s = compute_topic_stats(folder["id"])
+                cont.progress(s["progress"], text=f"{int(s['progress']*100)}%")
+            except Exception:
+                pass
         cnt = count_items_in_folder(folder["id"])
     
         # Row 1: title + meta (two columns, single nesting level)
@@ -953,17 +1031,18 @@ def render_all_resources_page():
     # Maps for quick lookup
     folder_by_id = {f["id"]: f for f in folders}
 
-    def _folder_path(fid: str) -> str:
+    def _folder_path(fid: Optional[str]) -> str:
         # Build "Subject / Exam / Topic" path
+        if not fid:
+            return "Unfiled"
         parts = []
         cur = folder_by_id.get(fid)
-        # climb up to root
         while cur:
             parts.append(cur.get("name",""))
             pid = cur.get("parent_id")
             cur = folder_by_id.get(pid) if pid else None
         parts.reverse()
-        return " / ".join([p for p in parts if p])
+        return " / ".join([p for p in parts if p]) or "Unfiled"
 
     def _kind_icon(kind: str) -> str:
         return {"summary":"📄", "flashcards":"🧠", "quiz":"🧪"}.get(kind, "📄")
@@ -1056,25 +1135,37 @@ def render_all_resources_page():
             _row_actions(it, suffix="flat")
         return
 
-    # Group by path "Subject / Exam / Topic"
+    # --------- Group by TOPIC folder and show progress ----------
     from collections import defaultdict
-    buckets = defaultdict(list)
+    bucket_by_topic: Dict[Optional[str], List[dict]] = defaultdict(list)
     for it in rows:
-        path = _folder_path(it.get("folder_id")) or "Unfiled"
-        buckets[path].append(it)
+        bucket_by_topic[it.get("folder_id")].append(it)
 
-    # Sort groups by name
-    for path in sorted(buckets.keys(), key=lambda p: p.lower()):
-        group_items = buckets[path]
-        # header with counts
+    def _topic_sort_key(tid: Optional[str]) -> str:
+        return (_folder_path(tid) or "Unfiled").lower()
+
+    for topic_id in sorted(bucket_by_topic.keys(), key=_topic_sort_key):
+        group_items = bucket_by_topic[topic_id]
+        path = _folder_path(topic_id) or "Unfiled"
+
+        # counts per kind
         notes_n = sum(1 for x in group_items if x["kind"]=="summary")
         flash_n = sum(1 for x in group_items if x["kind"]=="flashcards")
         quiz_n  = sum(1 for x in group_items if x["kind"]=="quiz")
         badge = f" | 📄 {notes_n}  🧠 {flash_n}  🧪 {quiz_n}"
 
-        with st.expander(f"📁 {path}{badge}", expanded=False):
+        # compute stats/progress for the topic
+        stats = compute_topic_stats(topic_id)
+        pct = int(round(stats["progress"] * 100))
+        quiz_pct = int(round(stats["quiz_avg"] * 100))
+        flash_pct = int(round(stats["flash_known"] * 100))
+
+        with st.expander(f"📁 {path}{badge} — {pct}% complete", expanded=False):
+            st.progress(stats["progress"], text=f"Quiz avg: {quiz_pct}% • Flash known: {flash_pct}%")
+            st.caption(f"Based on {stats['quiz_count']} quiz(es) and {stats['flash_reviews']} flash review(s).")
+
             for it in group_items:
-                _row_actions(it, suffix=f"group_{hash(path)%10000}")
+                _row_actions(it, suffix=f"group_{topic_id or 'unfiled'}")
 
 
 # If a view is requested, render that page directly and stop
