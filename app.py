@@ -6,83 +6,76 @@ import streamlit as st
 st.markdown("""
 <style>
 /* =========================
-   FONT + COLOR SYSTEM
+   FONT + COLORS
    ========================= */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif; }
 
-html, body, [class*="css"] {
-  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
-}
-
-:root {
-  --bg: #ffffff;
-  --text: #0f172a;
-  --text-dim: #334155;
-  --border: #1e3a8a;
-  --border-subtle: #cbd5e1;
-  --primary: #1e3a8a;
-  --primary-hover: #172554;
-  --surface: #ffffff;
+:root{
+  --bg:#ffffff;
+  --text:#0f172a;
+  --text-dim:#334155;
+  --border:#1e3a8a;
+  --border-subtle:#e2e8f0;
+  --primary:#1e3a8a;
+  --primary-hover:#172554;
+  --surface:#ffffff;
 }
 
 /* =========================
-   PAGE CONTAINER + HEADINGS
+   PAGE LAYOUT + BORDER MARGINS
    ========================= */
-body {
-  background: var(--bg);
-  color: var(--text);
-}
+body{ background:var(--bg); color:var(--text); }
 
-.block-container {
+.block-container{
   max-width: 1100px !important;
   padding: 1rem 1.25rem 2rem 1.25rem !important;
   margin: 0 auto !important;
-  box-shadow: inset 1px 0 var(--border-subtle), inset -1px 0 var(--border-subtle);
+  /* subtle side borders to give page edges back */
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  /* a touch of rounding so it feels like a page */
+  border-radius: 6px;
 }
 
-h1 { font-size: 2rem; font-weight: 700; margin: .75rem 0 .5rem; color: var(--text); }
-h2 { font-size: 1.5rem; font-weight: 700; margin: .65rem 0 .45rem; }
-h3 { font-size: 1.15rem; font-weight: 600; margin: .5rem 0 .35rem; }
+/* Headings */
+h1{ font-size:2rem; font-weight:700; margin:.75rem 0 .5rem; color:var(--text); }
+h2{ font-size:1.5rem; font-weight:700; margin:.65rem 0 .45rem; }
+h3{ font-size:1.15rem; font-weight:600; margin:.5rem 0 .35rem; }
 
 /* Brand Title */
-.title-main {
+.title-main{
   font-size: 2.8rem;
   font-weight: 800;
   color: var(--primary);
-  letter-spacing: 0.5px;
-  margin-top: 0.5rem;
-  margin-bottom: 1.25rem;
+  letter-spacing:.5px;
+  margin-top:.5rem; margin-bottom:1.25rem;
 }
 
 /* Divider */
-hr, .stDivider { border-color: var(--border-subtle) !important; opacity: .9; }
+hr, .stDivider{ border-color: var(--border-subtle) !important; opacity:.9; }
 
 /* =========================
-   INPUTS / SELECTS / TEXTAREAS
+   COMPACT WIDGET WIDTHS (NARROW)
    ========================= */
-.stTextInput>div>div>input,
-.stTextArea textarea,
-[data-baseweb="input"] input {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-}
-.stSelectbox>div>div {
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  background: var(--surface) !important;
-}
-[data-testid="stFileUploadDropzone"] {
-  background: var(--surface) !important;
-  border: 1px dashed var(--border) !important;
-  border-radius: 12px !important;
+/* Target core input wrappers and constrain width */
+.stTextInput>div, .stTextArea>div, .stSelectbox>div, .stMultiSelect>div,
+[data-baseweb="select"], [data-baseweb="input"], [data-baseweb="textarea"],
+[data-testid="stFileUploadDropzone"]
+{
+  max-width: 520px !important;         /* 👈 narrower widgets */
+  width: 520px !important;
 }
 
-/* =========================
-   BUTTONS
-   ========================= */
-.stButton>button {
+/* Make radios, sliders, and checkboxes align to the same narrow width */
+.stRadio, .stSlider, .stCheckbox, .stNumberInput>div{
+  max-width: 520px !important;
+  width: 520px !important;
+}
+
+/* Keep buttons from stretching across full width if placed alone */
+.stButton{ max-width: 520px !important; }
+.stButton>button{
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
@@ -90,120 +83,105 @@ hr, .stDivider { border-color: var(--border-subtle) !important; opacity: .9; }
   padding: .45rem .8rem !important;
   font-weight: 600 !important;
 }
-.stButton>button[kind="primary"] {
+.stButton>button[kind="primary"]{
   background: var(--primary) !important;
-  color: #ffffff !important;
-  border: 1px solid var(--primary) !important;
+  color:#fff !important;
+  border-color: var(--primary) !important;
 }
-.stButton>button:hover { filter: brightness(.98); }
-.stButton>button[kind="primary"]:hover { background: var(--primary-hover) !important; }
+.stButton>button:hover{ filter:brightness(.98); }
+.stButton>button[kind="primary"]:hover{ background: var(--primary-hover) !important; }
+
+/* Inputs look consistent */
+.stTextInput>div>div>input,
+.stTextArea textarea,
+[data-baseweb="input"] input{
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+.stSelectbox>div>div{
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  background: var(--surface) !important;
+}
+[data-testid="stFileUploadDropzone"]{
+  background: var(--surface) !important;
+  border: 1px dashed var(--border) !important;
+  border-radius: 12px !important;
+}
+
+/* Responsive: relax widths a bit on small screens */
+@media (max-width: 740px){
+  .stTextInput>div, .stTextArea>div, .stSelectbox>div, .stMultiSelect>div,
+  [data-baseweb="select"], [data-baseweb="input"], [data-baseweb="textarea"],
+  [data-testid="stFileUploadDropzone"],
+  .stRadio, .stSlider, .stCheckbox, .stNumberInput>div,
+  .stButton
+  { width: 100% !important; max-width: 100% !important; }
+}
 
 /* =========================
-   SIDEBAR (NO ACCOUNT / SIGN OUT)
+   SIDEBAR (simple nav)
    ========================= */
-[data-testid="collapsedControl"] { display: none !important; }
-
-section[data-testid="stSidebar"] {
+[data-testid="collapsedControl"]{ display:none !important; }
+section[data-testid="stSidebar"]{
   width: 180px !important;
   min-width: 180px !important;
-  background: #f8fafc !important;
-  border-right: 1px solid var(--border-subtle) !important;
-  padding: 12px 8px !important;
+  background:#f8fafc !important;
+  border-right:1px solid var(--border-subtle) !important;
+  padding:12px 8px !important;
 }
-section[data-testid="stSidebar"] .block-container {
-  padding: 0 !important;
-  width: 100% !important;
+section[data-testid="stSidebar"] .block-container{ padding:0 !important; width:100% !important; }
+.nav-list{ display:flex; flex-direction:column; align-items:center; gap:10px; }
+.nav-btn .stButton>button{
+  width:95% !important; height:42px !important;
+  display:flex !important; align-items:center !important; justify-content:flex-start !important;
+  gap:10px !important; padding:6px 12px !important;
+  border-radius:10px !important; font-size:15px !important;
+  background:#fff !important; color:#0f172a !important; border:1px solid var(--border) !important;
 }
-.nav-list {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-.nav-btn .stButton>button {
-  width: 95% !important;
-  height: 42px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: flex-start !important;
-  gap: 10px !important;
-  padding: 6px 12px !important;
-  border-radius: 10px !important;
-  font-size: 15px !important;
-  background: #fff !important;
-  color: #0f172a !important;
-  border: 1px solid #1e3a8a !important;
-}
-.nav-btn .stButton>button:hover { background: #eef2ff !important; }
-.nav-btn.active .stButton>button { background: #dbeafe !important; border-width: 2px !important; }
+.nav-btn .stButton>button:hover{ background:#eef2ff !important; }
+.nav-btn.active .stButton>button{ background:#dbeafe !important; border-width:2px !important; }
 
 /* =========================
-   HEADER: TITLE + ICON + SIGN OUT
+   HEADER: title + account icon + sign out (tight)
    ========================= */
-.header-container {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0;
+.header-container{
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:.75rem; padding:.5rem 0;
 }
+.header-buttons{ display:flex; align-items:center; gap:.4rem; }
 
-.header-buttons {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+/* Account icon */
+.header-buttons .account-icon > button{
+  width:42px !important; height:42px !important; border-radius:50% !important;
+  background:#e5e7eb !important; border:1px solid var(--border) !important;
+  color:var(--primary) !important; font-size:20px !important;
+  display:flex !important; align-items:center !important; justify-content:center !important;
+  transition:background .2s ease-in-out;
 }
+.header-buttons .account-icon > button:hover{ background:#dbeafe !important; }
 
-/* Account (Head Icon) */
-.header-buttons .account-icon > button {
-  width: 44px !important;
-  height: 44px !important;
-  border-radius: 50% !important;
-  background: #e5e7eb !important;
-  border: 1px solid #1e3a8a !important;
-  color: #1e3a8a !important;
-  font-size: 20px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  transition: background 0.2s ease-in-out;
+/* Sign out */
+.header-buttons .signout > button{
+  font-weight:600 !important; border-radius:10px !important;
+  padding:.4rem .85rem !important; font-size:.9rem !important;
+  border:1px solid #ef4444 !important; color:#b91c1c !important; background:#fff !important;
 }
-.header-buttons .account-icon > button:hover { background: #dbeafe !important; }
-
-/* Sign Out */
-.header-buttons .signout > button {
-  font-weight: 600 !important;
-  border-radius: 12px !important;
-  padding: 0.45rem 1rem !important;
-  font-size: 0.95rem !important;
-  border: 1px solid #ef4444 !important;
-  color: #b91c1c !important;
-  background: #ffffff !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  transition: all 0.15s ease-in-out;
-}
-.header-buttons .signout > button:hover { background: #fee2e2 !important; }
+.header-buttons .signout > button:hover{ background:#fee2e2 !important; }
 
 /* =========================
-   PROGRESS / METRICS / CODE
+   MISC POLISH
    ========================= */
-.stProgress>div>div { background: #e2e8f0 !important; border-radius: 10px !important; }
-.stProgress>div>div>div { background: var(--primary) !important; }
-[data-testid="stMetricValue"] { color: var(--primary) !important; font-weight: 700; }
-code, pre { background: #f1f5f9 !important; color: #0f172a !important; border-radius: 8px !important; }
-.stExpander, .stAlert, .stDataFrame {
-  background: #ffffff !important;
-  border: 1px solid var(--border-subtle) !important;
-  border-radius: 12px !important;
+.stProgress>div>div{ background:#e2e8f0 !important; border-radius:10px !important; }
+.stProgress>div>div>div{ background:var(--primary) !important; }
+[data-testid="stMetricValue"]{ color:var(--primary) !important; font-weight:700; }
+code, pre{ background:#f1f5f9 !important; color:#0f172a !important; border-radius:8px !important; }
+.stExpander, .stAlert, .stDataFrame{
+  background:#ffffff !important; border:1px solid var(--border-subtle) !important; border-radius:12px !important;
 }
-
-/* =========================
-   COMPACT SPACING
-   ========================= */
-.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir {
-  margin-top: .25rem !important;
-  margin-bottom: .25rem !important;
-}
+.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir{ margin-top:.25rem !important; margin-bottom:.25rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
