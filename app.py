@@ -31,7 +31,7 @@ from auth_rest import (
     save_item, list_items, get_item, move_item, delete_item,
     create_folder, list_folders, delete_folder, list_child_folders,
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
-    save_flash_review, list_flash_reviews_for_items, get_user_info, update_user_info, change_password
+    save_flash_review, list_flash_reviews_for_items,
 )
 
 st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
@@ -364,105 +364,6 @@ if "item" in params and "sb_user" in st.session_state:
         if st.button("← Back to All Resources", key="item_back_btn2"):
             _set_params(view="all"); st.rerun()
     st.stop()
-
-# ---------- Top bar ----------
-def show_top_bar():
-    st.markdown(
-        """
-        <style>
-        .topbar { display: flex; justify-content: flex-end; align-items: center; height: 48px;}
-        .top-btn { margin-left: 1em; padding: .25em 1em; background: #eee; border-radius: 6px; cursor: pointer;}
-        </style>
-        <div class="topbar">
-            <span id="account-buttons"></span>
-        </div>
-        """, unsafe_allow_html=True
-    )
-    if "sb_user" in st.session_state:
-        if st.button("My Account", key="top_my_account", help="Account", use_container_width=False):
-            st.session_state["show_account"] = True
-        if st.button("Sign Out", key="top_signout", help="Sign out", use_container_width=False):
-            sign_out(); st.session_state.pop("show_account", None); st.rerun()
-    else:
-        if st.button("Login / Sign Up", key="top_login", help="Login", use_container_width=False):
-            st.session_state["show_login_modal"] = True
-
-# ---------- Modal login/signup ----------
-def show_login_modal():
-    st.markdown(
-        """
-        <style>
-        .modal-bg {position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(40,40,40,0.7);z-index:9999;}
-        .modal-box {position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:2em;border-radius:12px;z-index:10000;min-width:320px;}
-        </style>
-        <div class="modal-bg"></div>
-        <div class="modal-box">
-        """, unsafe_allow_html=True
-    )
-    mode = st.radio("Choose", ["Login", "Sign Up"], index=0)
-    if mode == "Login":
-        email = st.text_input("Email", key="login_email_modal")
-        pwd = st.text_input("Password", type="password", key="login_pwd_modal")
-        if st.button("Sign In", key="login_btn_modal"):
-            try:
-                sign_in(email, pwd)
-                st.session_state.pop("show_login_modal", None)
-                st.experimental_rerun()
-            except Exception as e:
-                st.error(str(e))
-    else:
-        display_name = st.text_input("Display Name", key="signup_display_name")
-        username = st.text_input("Username", key="signup_username")
-        email = st.text_input("Email", key="signup_email")
-        pwd = st.text_input("Password", type="password", key="signup_pwd")
-        if st.button("Create Account", key="signup_btn_modal"):
-            try:
-                sign_up(email, pwd, display_name, username)  # Backend needs update
-                st.success("Check email to confirm, then login.")
-            except Exception as e:
-                st.error(str(e))
-    if st.button("Close", key="close_modal"):
-        st.session_state.pop("show_login_modal", None)
-
-    st.markdown("</div>", unsafe_allow_html=True)  # close modal box
-
-# ---------- My Account page ----------
-def show_account_page():
-    st.markdown(
-        """
-        <div style="display:flex;flex-direction:row;align-items:center;">
-            <button onclick="window.location.reload()" style="margin-right:1em">← Back</button>
-            <h2>My Account</h2>
-        </div>
-        """, unsafe_allow_html=True
-    )
-    user_info = get_user_info()
-    # Editable display name and username
-    new_display_name = st.text_input("Display Name", value=user_info.get("display_name",""))
-    new_username = st.text_input("Username", value=user_info.get("username",""))
-    new_email = st.text_input("Email", value=user_info.get("email",""))
-
-    if st.button("Save Changes", key="save_account_changes"):
-        try:
-            update_user_info(new_display_name, new_username, new_email)
-            st.success("Account updated.")
-        except Exception as e:
-            st.error(str(e))
-
-    # Change password
-    st.markdown("### Change Password")
-    old_pwd = st.text_input("Current password", type="password", key="acc_old_pwd")
-    new_pwd = st.text_input("New password", type="password", key="acc_new_pwd")
-    if st.button("Change Password", key="change_pwd_btn"):
-        try:
-            change_password(old_pwd, new_pwd)  # backend api
-            st.success("Password changed.")
-        except Exception as e:
-            st.error(str(e))
-
-    if st.button("Back", key="account_back_btn"):
-        st.session_state.pop("show_account", None); st.rerun()
-
 
 # ---------------- Tabs ----------------
 view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
@@ -856,3 +757,4 @@ with tabs[2]:
                 if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
                     try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
                     except Exception as e: st.error(f"Delete failed: {e}")
+
