@@ -30,6 +30,83 @@ from auth_rest import (
     sb_add_friend, sb_list_friends_with_profiles, sb_sum_xp_for_window, sb_get_xp_totals_for_user
 )
 
+
+# --- Add these imports at the top of auth_rest.py ---
+import requests
+import streamlit as st
+from datetime import datetime, timedelta, timezone
+
+# --- Supabase REST headers (local to this module) ---
+def _sb_headers():
+    """
+    Returns (base_url, headers) for Supabase REST calls using anon/service key.
+    Keep this local so helpers below don't depend on app.py.
+    """
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("Missing SUPABASE_URL / SUPABASE_ANON_KEY (or SUPABASE_KEY).")
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    return url, headers
+
+# --- Time window helpers (UTC) ---
+def _iso_start_of_today_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    return start.isoformat()
+
+def _iso_start_of_tomorrow_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)
+    return start.isoformat()
+
+def _iso_start_of_month_utc() -> str:
+    now = datetime.now(timezone.utc)
+    start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    return start.isoformat()
+
+def _iso_start_of_next_month_utc() -> str:
+    now = datetime.now(timezone.utc)
+    month = now.month + 1
+    year = now.year + (1 if month == 13 else 0)
+    month = 1 if month == 13 else month
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    return start.isoformat()
+
+# --- XP aggregation helpers ---
+def sb_sum_xp_for_window(user_id: str, start_iso: str, end_iso: str) -> int:
+    """
+    Sum xp from xp_events for a user in [start_iso, end_iso).
+    """
+    url, headers = _sb_headers()
+    q = (
+        f"{url}/rest/v1/xp_events"
+        f"?user_id=eq.{user_id}"
+        f"&occurred_at=gte.{start_iso}"
+        f"&occurred_at=lt.{end_iso}"
+        f"&select=xp"
+    )
+    r = requests.get(q, headers=headers, timeout=25)
+    if r.status_code != 200:
+        return 0
+    try:
+        return int(sum(int(row.get("xp") or 0) for row in r.json()))
+    except Exception:
+        return 0
+
+def sb_get_xp_totals_for_user(user_id: str) -> dict:
+    """
+    Returns {"today": int, "month": int}
+    """
+    today = sb_sum_xp_for_window(user_id, _iso_start_of_today_utc(), _iso_start_of_tomorrow_utc())
+    month = sb_sum_xp_for_window(user_id, _iso_start_of_month_utc(), _iso_start_of_next_month_utc())
+    return {"today": today, "month": month}
+
 # ---- Cookies (define BEFORE any dialog uses it) ----
 COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
 cookies = None
