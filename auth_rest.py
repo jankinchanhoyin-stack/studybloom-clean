@@ -1,4 +1,3 @@
-# auth_rest.py
 import os
 import time
 import json
@@ -32,15 +31,6 @@ def _rest_headers(api_key: str, auth_token: str | None = None):
 
 # ---------- Session helpers ----------
 def _set_user_session(session_json: dict):
-    """
-    Expected shape (minimal):
-    {
-        "access_token": "...",
-        "token_type": "bearer",
-        "expires_in": 3600,
-        "user": { ... }
-    }
-    """
     st.session_state["sb_user"] = {
         "user": session_json.get("user") or {},
         "access_token": session_json.get("access_token"),
@@ -89,11 +79,9 @@ def sign_up(email: str, password: str):
     return r.json()
 
 def sign_out():
-    # Clearing local session is enough for this app (we’re not persisting refresh tokens)
     st.session_state.pop("sb_user", None)
 
 # ---------- Profiles (user metadata) ----------
-# Expect a table `profiles` with columns: id (uuid, PK, references auth.users), name (text), username (text unique), avatar_url (text)
 def get_profile(user_id: str) -> dict | None:
     if not user_id:
         return None
@@ -105,23 +93,16 @@ def get_profile(user_id: str) -> dict | None:
             headers=h,
             timeout=20,
         )
-        # If table missing / RLS blocks / not acceptable, just return None and don't crash UI
         if r.status_code in (401, 403, 404, 406):
             return None
         if r.status_code >= 400:
-            # Soft-fail: don't blow up the app
             return None
         arr = r.json() or []
         return arr[0] if arr else None
     except Exception:
-        # Network or other unknown error -> soft-fail
         return None
 
-
 def upsert_profile(user_id: str, name: str = "", username: str = "", avatar_url: str = "") -> dict:
-    """
-    Uses REST upsert via 'Prefer: resolution=merge-duplicates' + POST.
-    """
     if not user_id:
         raise RuntimeError("No user id")
     url, key = _base()
@@ -144,13 +125,7 @@ def upsert_profile(user_id: str, name: str = "", username: str = "", avatar_url:
     data = r.json()
     return data[0] if isinstance(data, list) and data else payload
 
-# ---------- Change password ----------
 def change_password(current_password: str, new_password: str):
-    """
-    Requires a valid user access token.
-    Supabase: PATCH /auth/v1/user with Authorization: Bearer <user access token>, body {"password": "..."}
-    Note: If SMTP / email reauth policies are required, Supabase handles that.
-    """
     tok = _current_access_token()
     if not tok:
         raise RuntimeError("You must be signed in to change password.")
@@ -204,7 +179,6 @@ def list_child_folders(parent_id: str | None):
 def delete_folder(folder_id: str):
     url, key = _base()
     h = _rest_headers(key)
-    # You probably have ON DELETE CASCADE set up; if not, delete children first.
     r = requests.delete(f"{url}/rest/v1/folders?id=eq.{folder_id}", headers=h, timeout=20)
     if r.status_code >= 400:
         raise RuntimeError(f"Delete folder failed: {r.text}")
@@ -281,7 +255,6 @@ def list_quiz_attempts_for_items(item_ids: list[str]):
         return []
     url, key = _base()
     h = _rest_headers(key)
-    # in= (comma-separated)
     idlist = ",".join(item_ids)
     r = requests.get(f"{url}/rest/v1/quiz_attempts?item_id=in.({idlist})&select=*&order=created_at.desc", headers=h, timeout=20)
     if r.status_code >= 400:
@@ -308,6 +281,7 @@ def list_flash_reviews_for_items(item_ids: list[str]):
     if r.status_code >= 400:
         raise RuntimeError(f"List flash reviews failed: {r.text}")
     return r.json() or []
+
 
 
 
