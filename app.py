@@ -388,13 +388,18 @@ view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("v
 default_idx = 2 if view == "all" else (1 if view == "resources" else 0)
 tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 
+# ---------------- Tabs ----------------
+view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
+default_idx = 2 if view == "all" else (1 if view == "resources" else 0)
+tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
+
 # ===== Quick Study =====
 with tabs[0]:
     st.title("⚡ Quick Study")
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
-        subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
+        subjects = roots_only(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
 
         # Subject
         st.markdown("### Subject")
@@ -413,7 +418,6 @@ with tabs[0]:
             subj_pick = st.selectbox("Use existing subject", ["— select —"]+subj_names, key="qs_subject_pick")
             if subj_pick in subj_names:
                 subject_id = next(s["id"] for s in subjects if s["name"]==subj_pick)
-
         # Exam
         st.markdown("### Exam")
         exam_id = None
