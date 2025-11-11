@@ -644,7 +644,7 @@ if "item" in params and "sb_user" in st.session_state:
 
         # Back -> All Resources
         if st.button("← Back to Resources", key="item_back_btn"):
-            _set_params(view="resources")
+            _set_params(view="all")
             st.rerun()
 
         data = full.get("data") or {}
@@ -660,7 +660,7 @@ if "item" in params and "sb_user" in st.session_state:
     except Exception as e:
         st.error(f"Could not load item: {e}")
         if st.button("← Back to Resources", key="item_back_btn"):
-            _set_params(view="resources")
+            _set_params(view="all")
             st.rerun()
     st.stop()
 
@@ -669,6 +669,12 @@ _view_param = _get_params().get("view")
 view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
 
 def render_resources_page():
+    # ← Home (top-left)
+    bcol, _ = st.columns([1, 9])
+    if bcol.button("← Home", key="res_back_home"):
+        _set_params(view=None)  # clears to home/Quick Study
+        st.rerun()
+
     st.title("🧰 Resources")
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources.")
@@ -806,7 +812,7 @@ def render_resources_page():
     else:
         st.caption("Pick an Exam to reveal Topics.")
 
-    # Items inside Topic (neat buttons)
+    # Items inside Topic
     if topic_id:
         st.progress(compute_topic_progress(topic_id), text="Topic progress")
         emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
@@ -839,9 +845,16 @@ def render_resources_page():
                     except Exception as e: st.error(f"Delete failed: {e}")
 
 def render_all_resources_page():
+    # ← Home (top-left)
+    bcol, _ = st.columns([1, 9])
+    if bcol.button("← Home", key="all_back_home"):
+        _set_params(view=None)
+        st.rerun()
+
     st.title("🗂️ All Resources (Newest)")
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources."); return
+
     emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
     try: all_items = list_items(None, limit=1000)
     except: all_items = []
@@ -853,7 +866,7 @@ def render_all_resources_page():
         c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
         with c1:
             if st.button("Open", key=f"all_open_{it['id']}", use_container_width=True):
-                _set_params(item=it['id'], view="resources"); st.rerun()
+                _set_params(item=it['id'], view="all"); st.rerun()
         with c2:
             if not st.session_state.get(f"edit_item_all_{it['id']}", False):
                 if st.button("Rename", key=f"all_btn_rename_{it['id']}", use_container_width=True):
