@@ -210,7 +210,7 @@ def _topbar():
                     st.rerun()
         else:
             with b1:
-                if st.button("My Profile", key="top_profile", help="View your account"):
+                if st.button("👤", key="top_profile", help="View your account"):
                     _set_params(view="account")
                     st.rerun()
 _topbar()
