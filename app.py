@@ -102,23 +102,49 @@ def _set_params(**kwargs):
 
 # ---------------- Supabase REST helpers ----------------
 def _sb_headers():
+    """
+    Returns (base_url, headers) for Supabase REST calls using the anon/service key.
+    Matches auth_rest's key selection so both paths work the same.
+    """
     url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-    if not url or not key: raise RuntimeError("Missing SUPABASE_URL / SUPABASE_KEY")
-    return url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type":"application/json", "Prefer":"return=representation"}
+    # Use the same env precedence as auth_rest: ANON first, then KEY
+    key = (
+        st.secrets.get("SUPABASE_ANON_KEY")
+        or st.secrets.get("SUPABASE_KEY")
+    )
+    if not url or not key:
+        raise RuntimeError("Missing SUPABASE_URL / SUPABASE_ANON_KEY (or SUPABASE_KEY).")
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    return url, headers
 
 def rename_item(item_id: str, new_title: str) -> dict:
-    url, h = _sb_headers()
-    r = requests.patch(f"{url}/rest/v1/items?id=eq.{item_id}", json={"title": new_title}, headers=h, timeout=20)
-    r.raise_for_status(); data = r.json()
+    url, headers = _sb_headers()
+    resp = requests.patch(
+        f"{url}/rest/v1/items?id=eq.{item_id}",
+        json={"title": new_title},
+        headers=headers,
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
     return data[0] if isinstance(data, list) and data else {}
 
 def rename_folder(folder_id: str, new_name: str) -> dict:
-    url, h = _sb_headers()
-    r = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}", json={"name": new_name}, headers=h, timeout=20)
-    r.raise_for_status(); data = r.json()
+    url, headers = _sb_headers()
+    resp = requests.patch(
+        f"{url}/rest/v1/folders?id=eq.{folder_id}",
+        json={"name": new_name},
+        headers=headers,
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
     return data[0] if isinstance(data, list) and data else {}
-
 # ---- cookie-based “stay signed in” (optional, safe import) ----
 COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
 cookies = None
