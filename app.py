@@ -1,329 +1,101 @@
+# app.py
 import streamlit as st
-st.set_page_config(page_title="StudyBloom", page_icon="📚")
-
-import sys, requests
+import sys, random, requests
 from typing import Optional, List, Dict, Tuple
 
 from pdf_utils import extract_any
-from llm import (
-    summarize_text,
-    generate_quiz_from_notes,
-    generate_flashcards_from_notes,
-    grade_free_answer,
-)
+from llm import summarize_text, grade_free_answer, generate_quiz_from_notes
 from auth_rest import (
-    sign_in, sign_up, sign_out, refresh_user,
+    sign_in, sign_up, sign_out, get_current_user, refresh_user,
+    update_user_metadata, change_password,
     save_item, list_items, get_item, move_item, delete_item,
     create_folder, list_folders, delete_folder, list_child_folders,
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
-    save_flash_review, list_flash_reviews_for_items,
-    update_profile, update_password,
+    save_flash_review, list_flash_reviews_for_items
 )
 
-# ---------------- Header Bar (top-right auth) ----------------
-def header_bar():
-    st.markdown(
-        """
-        <style>
-        .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; }
-        .topbar .left { font-weight:600; font-size:1.1rem; }
-        .topbar .right { display:flex; gap:.5rem; align-items:center; }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-    left, right = st.columns([3, 2])
-    with left:
-        # Back button on My Account page
-        view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")
-        if view == "account":
-            if st.button("← Back", key="acct_back_btn"):
-                _set_params(view=""); st.rerun()
-        else:
-            st.markdown("<div class='left'>StudyBloom</div>", unsafe_allow_html=True)
+# ---------- Page config ----------
+st.set_page_config(page_title="StudyBloom", page_icon="📚")
+st.caption(f"Python: {sys.version.split()[0]} • Build: auth-modal-account-2025-11-11")
 
-    with right:
-        st.markdown("<div class='right'>", unsafe_allow_html=True)
-        if "sb_user" in st.session_state:
-            user = st.session_state["sb_user"]["user"]
-            dn = _user_display_name(user)
-            st.caption(f"Signed in as **{dn}**")
-            c1, c2 = st.columns([1,1], vertical_alignment="center")
-            with c1:
-                if st.button("My Account", key="btn_account"):
-                    _set_params(view="account"); st.rerun()
-            with c2:
-                if st.button("Sign out", key="btn_logout"):
-                    if cookies:
-                        try:
-                            if "sb_access" in cookies: del cookies["sb_access"]
-                            if "sb_email" in cookies: del cookies["sb_email"]
-                            cookies.save()
-                        except Exception:
-                            pass
-                    sign_out(); st.rerun()
-        else:
-            c1, c2 = st.columns([1,1])
-            with c1:
-                if st.button("Log in", key="btn_login"):
-                    st.session_state["auth_mode"] = "login"
-                    st.session_state["show_auth_dialog"] = True
-            with c2:
-                if st.button("Sign up", key="btn_signup"):
-                    st.session_state["auth_mode"] = "signup"
-                    st.session_state["show_auth_dialog"] = True
-        st.markdown("</div>", unsafe_allow_html=True)
-
-header_bar()
-
-# ---------------- Auth Dialog ----------------
-if "show_auth_dialog" not in st.session_state:
-    st.session_state["show_auth_dialog"] = False
-if "auth_mode" not in st.session_state:
-    st.session_state["auth_mode"] = "login"
-
-def open_auth(mode="login"):
-    st.session_state["auth_mode"] = mode
-    st.session_state["show_auth_dialog"] = True
-
-def close_auth():
-    st.session_state["show_auth_dialog"] = False
-
-@st.dialog("Welcome to StudyBloom")
-def auth_dialog():
-    mode = st.session_state.get("auth_mode", "login")
-    tabs = st.tabs(["Log in", "Sign up"])
-    # ----- Login tab -----
-    with tabs[0]:
-        st.markdown("### Log in")
-        email = st.text_input("Email", key="dlg_login_email")
-        pwd = st.text_input("Password", type="password", key="dlg_login_pwd")
-        remember = st.checkbox("Stay signed in", value=True, key="dlg_login_rem")
-        col1, col2 = st.columns(2)
-        if col1.button("Log in", type="primary", key="dlg_login_btn"):
-            try:
-                data = sign_in(email, pwd)
-                if remember and cookies:
-                    tok = data.get("access_token")
-                    if tok:
-                        cookies["sb_access"] = tok
-                        cookies["sb_email"] = email or ""
-                        cookies.save()
-                close_auth(); st.rerun()
-            except Exception as e:
-                st.error(str(e))
-        if col2.button("Cancel", key="dlg_login_cancel"):
-            close_auth()
-
-    # ----- Sign-up tab -----
-    with tabs[1]:
-        st.markdown("### Create your account")
-        disp = st.text_input("Display name", key="dlg_reg_display")
-        usern = st.text_input("Username", key="dlg_reg_username", help="Shown to others; can be edited later.")
-        remail = st.text_input("Email", key="dlg_reg_email")
-        rpwd = st.text_input("Password", type="password", key="dlg_reg_pwd")
-        rpwd2 = st.text_input("Confirm password", type="password", key="dlg_reg_pwd2")
-        c1, c2 = st.columns(2)
-        if c1.button("Sign up", type="primary", key="dlg_reg_btn"):
-            if rpwd != rpwd2:
-                st.error("Passwords do not match.")
-            elif not disp.strip() or not usern.strip():
-                st.error("Please enter display name and username.")
-            else:
-                try:
-                    sign_up(remail, rpwd, disp.strip(), usern.strip())
-                    st.success("Account created. Please check your email to confirm, then log in.")
-                except Exception as e:
-                    st.error(str(e))
-        if c2.button("Cancel", key="dlg_reg_cancel"):
-            close_auth()
-
-# Auto-open on entry if not signed in
-if ("sb_user" not in st.session_state) and not st.session_state.get("auth_dismissed_once"):
-    st.session_state["auth_mode"] = "login"
-    st.session_state["show_auth_dialog"] = True
-    st.session_state["auth_dismissed_once"] = True
-
-if st.session_state.get("show_auth_dialog"):
-    auth_dialog()
-# ---------------- My Account PAGE ----------------
-params = _get_params()
-if ((_get_params().get("view") or [""])[0] if isinstance(_get_params().get("view"), list) else _get_params().get("view")) == "account":
-    st.title("My Account")
-    if "sb_user" not in st.session_state:
-        st.info("Please log in.")
-        st.stop()
-    user = st.session_state["sb_user"]["user"]  # fresh-ish
-    md = (user.get("user_metadata") or {})
-    disp_cur = md.get("display_name") or ""
-    usern_cur = md.get("username") or _user_username(user)
-    email_cur = user.get("email") or ""
-
-    st.markdown("### Profile")
-    c1, c2 = st.columns(2)
-    with c1:
-        new_disp = st.text_input("Display name", value=disp_cur, key="acct_disp")
-    with c2:
-        new_usern = st.text_input("Username", value=usern_cur, key="acct_usern", help="Letters/numbers/underscore recommended.")
-
-    st.text_input("Email", value=email_cur, disabled=True, key="acct_email")
-
-    if st.button("Save profile", type="primary", key="acct_save"):
-        try:
-            update_profile(display_name=new_disp.strip(), username=new_usern.strip())
-            st.success("Profile updated.")
-        except Exception as e:
-            st.error(f"Update failed: {e}")
-
-    st.markdown("---")
-    st.markdown("### Change password")
-    npwd1 = st.text_input("New password", type="password", key="acct_pwd1")
-    npwd2 = st.text_input("Confirm new password", type="password", key="acct_pwd2")
-    if st.button("Update password", key="acct_pwd_btn"):
-        if npwd1 != npwd2:
-            st.error("Passwords do not match.")
-        elif not npwd1:
-            st.error("Enter a password.")
-        else:
-            try:
-                update_password(npwd1)
-                st.success("Password changed.")
-            except Exception as e:
-                st.error(f"Password change failed: {e}")
-
-    st.stop()
-
-
-# ---- CSS: compact action buttons, avoid wrapping ----
-st.markdown("""
-<style>
-.stButton > button {
-  white-space: nowrap !important;
-  padding: .35rem .65rem !important;
-  line-height: 1.1 !important;
-}
-.small-btn .stButton > button {
-  padding: .25rem .5rem !important;
-  font-size: .9rem !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-
-st.caption(f"Python {sys.version.split()[0]} • Build: inline-actions + gated-generate")
-
-# ---------------- Query helpers ----------------
+# ---------- URL helpers ----------
 def _get_params() -> Dict[str, str]:
     try: return dict(st.query_params)
-    except: return st.experimental_get_query_params()
+    except Exception: return st.experimental_get_query_params()
 
 def _set_params(**kwargs):
-    try:
-        st.query_params.clear()
-        st.query_params.update(kwargs)
-    except Exception:
-        st.experimental_set_query_params(**kwargs)
+    try: st.query_params.clear(); st.query_params.update(kwargs)
+    except Exception: st.experimental_set_query_params(**kwargs)
 
-# ---------------- Supabase REST helpers ----------------
-def _sb_headers():
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-    if not url or not key: raise RuntimeError("Missing SUPABASE_URL / SUPABASE_KEY")
-    return url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type":"application/json", "Prefer":"return=representation"}
+def _clear_params(): _set_params()
 
-def rename_item(item_id: str, new_title: str) -> dict:
-    url, h = _sb_headers()
-    r = requests.patch(f"{url}/rest/v1/items?id=eq.{item_id}", json={"title": new_title}, headers=h, timeout=20)
-    r.raise_for_status(); data = r.json()
-    return data[0] if isinstance(data, list) and data else {}
+# ---------- Layout: top bar ----------
+def top_bar():
+    cols = st.columns([6,2,2])
+    with cols[0]:
+        st.markdown("### 📚 StudyBloom")
+    user = get_current_user()
+    if user:
+        with cols[1]:
+            if st.button("My Account", key="btn_account"):
+                _set_params(account="1"); st.rerun()
+        with cols[2]:
+            if st.button("Sign out", key="btn_signout"):
+                sign_out(); _clear_params(); st.rerun()
+    else:
+        with cols[1]:
+            if st.button("Log in", key="btn_login_open"):
+                st.session_state["auth_modal_mode"] = "login"
+                st.session_state["auth_modal_open"] = True
+        with cols[2]:
+            if st.button("Sign up", key="btn_signup_open"):
+                st.session_state["auth_modal_mode"] = "signup"
+                st.session_state["auth_modal_open"] = True
 
-def rename_folder(folder_id: str, new_name: str) -> dict:
-    url, h = _sb_headers()
-    r = requests.patch(f"{url}/rest/v1/folders?id=eq.{folder_id}", json={"name": new_name}, headers=h, timeout=20)
-    r.raise_for_status(); data = r.json()
-    return data[0] if isinstance(data, list) and data else {}
+# ---------- Auth modal ----------
+def show_auth_modal(default_mode: str = "login"):
+    mode = st.session_state.get("auth_modal_mode", default_mode)
+    @st.experimental_dialog("Welcome to StudyBloom")
+    def _dialog():
+        tabs = st.tabs(["Log in", "Sign up"])
+        # Log in
+        with tabs[0]:
+            st.write("Log in to save, organize and track your study.")
+            email = st.text_input("Email", key="dlg_login_email")
+            pwd = st.text_input("Password", type="password", key="dlg_login_pwd")
+            if st.button("Log in", type="primary", key="dlg_login_btn"):
+                try:
+                    sign_in(email, pwd)
+                    st.success("Logged in!")
+                    st.rerun()
+                except requests.HTTPError as e:
+                    st.error(getattr(e.response, "text", str(e)))
+                except Exception as e:
+                    st.error(str(e))
+        # Sign up
+        with tabs[1]:
+            st.write("Create your account")
+            disp = st.text_input("Display name", key="dlg_disp")
+            uname = st.text_input("Username", key="dlg_uname")
+            email2 = st.text_input("Email", key="dlg_email")
+            pwd2 = st.text_input("Password", type="password", key="dlg_pwd")
+            if st.button("Create account", type="primary", key="dlg_signup_btn"):
+                try:
+                    sign_up(email2, pwd2, display_name=disp or None, username=uname or None)
+                    st.success("Sign-up successful. Check your email to confirm, then log in.")
+                except requests.HTTPError as e:
+                    st.error(getattr(e.response, "text", str(e)))
+                except Exception as e:
+                    st.error(str(e))
+    _dialog()
 
-# ---- cookie-based “stay signed in” (optional, safe import) ----
-COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "change_me_please")
-cookies = None
-try:
-    from streamlit_cookies_manager import EncryptedCookieManager
-    cookies = EncryptedCookieManager(prefix="studybloom.", password=COOKIE_PASSWORD)
-    if not cookies.ready():
-        st.stop()
-except Exception:
-    cookies = None  # proceed without cookies if not installed
-
-def _fetch_user_from_token(access_token: str) -> Optional[dict]:
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-        h = {"apikey": key, "Authorization": f"Bearer {access_token}"}
-        r = requests.get(f"{url}/auth/v1/user", headers=h, timeout=15)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return None
-
-# Restore session from cookie if present
-if "sb_user" not in st.session_state and cookies:
-    tok = cookies.get("sb_access")
-    if tok:
-        user = _fetch_user_from_token(tok)
-        if user:
-            st.session_state["sb_user"] = {"user": user, "access_token": tok}
-
-def _user_display_name(u: dict) -> str:
-    md = (u or {}).get("user_metadata") or {}
-    return md.get("display_name") or md.get("username") or (u.get("email") or "Account")
-
-def _user_username(u: dict) -> str:
-    md = (u or {}).get("user_metadata") or {}
-    if md.get("username"):
-        return md["username"]
-    # fallback: deterministic short id
-    uid = (u.get("id") or "")[-6:] or "000000"
-    return f"user{uid}"
-
-
-# ---------------- Progress calc ----------------
-def compute_topic_progress(topic_folder_id: str) -> float:
-    try:
-        items = list_items(topic_folder_id, limit=500)
-        quiz_ids = [it["id"] for it in items if it["kind"]=="quiz"]
-        flash_ids = [it["id"] for it in items if it["kind"]=="flashcards"]
-
-        quiz_score = 0.0
-        if quiz_ids:
-            attempts = list_quiz_attempts_for_items(quiz_ids)
-            latest: Dict[str, Tuple[int,int]] = {}
-            for at in attempts:
-                qid = at["item_id"]
-                if qid not in latest: latest[qid] = (at["correct"], at["total"])
-            if latest:
-                ratios = [(c/t) if t else 0 for (c,t) in latest.values()]
-                quiz_score = sum(ratios)/len(ratios)
-
-        flash_score = 0.0
-        if flash_ids:
-            reviews = list_flash_reviews_for_items(flash_ids)
-            if reviews:
-                known = sum(1 for r in reviews if r.get("known"))
-                flash_score = known / max(1, len(reviews))
-
-        return 0.6*quiz_score + 0.4*flash_score
-    except Exception:
-        return 0.0
-
-# ---------------- Renderers ----------------
+# ---------- Common renderers (notes/flashcards/quiz/progress) ----------
 def render_summary(data: dict):
     st.subheader("📝 Notes")
-    st.markdown(f"**TL;DR**: {data.get('tl_dr','')}")
+    st.markdown(f"**TL;DR**: {data.get('tl_dr', '')}")
     for sec in (data.get("sections") or []):
         st.markdown(f"### {sec.get('heading','Section')}")
-        for b in sec.get("bullets",[]) or []:
+        for b in sec.get("bullets", []) or []:
             st.markdown(f"- {b}")
     if data.get("key_terms"):
         st.markdown("## Key Terms")
@@ -332,194 +104,273 @@ def render_summary(data: dict):
     if data.get("formulas"):
         st.markdown("## Formulas")
         for f in data["formulas"]:
-            name, expr, meaning = f.get("name",""), (f.get("latex") or f.get("expression") or "").strip(), f.get("meaning","")
+            name = f.get("name","")
+            expr = (f.get("latex") or f.get("expression") or "").strip()
+            meaning = f.get("meaning","")
             if any(s in expr for s in ["\\frac","\\sqrt","^","_","\\times","\\cdot","\\sum","\\int","\\left","\\right"]):
                 if name or meaning: st.markdown(f"**{name}** — {meaning}")
                 try: st.latex(expr)
-                except: st.code(expr)
+                except Exception: st.code(expr)
             else:
                 st.markdown(f"- **{name}**: `{expr}` — {meaning}")
+    if data.get("examples"):
+        st.markdown("## Worked Examples")
+        for e in data["examples"]: st.markdown(f"- {e}")
+    if data.get("common_pitfalls"):
+        st.markdown("## Common Pitfalls")
+        for p in data["common_pitfalls"]: st.markdown(f"- {p}")
 
-def interactive_flashcards(flashcards: List[dict], item_id: Optional[str]=None, key_prefix="fc"):
+def interactive_flashcards(flashcards: List[dict], item_id: Optional[str] = None, key_prefix: str = "fc"):
     st.subheader("🧠 Flashcards")
-    if not flashcards: st.caption("No flashcards found."); return
-    st.session_state.setdefault(f"{key_prefix}_idx",0)
-    st.session_state.setdefault(f"{key_prefix}_revealed",False)
+    if not flashcards:
+        st.caption("No flashcards found."); return
+    st.session_state.setdefault(f"{key_prefix}_idx", 0)
+    st.session_state.setdefault(f"{key_prefix}_revealed", False)
     st.session_state.setdefault(f"{key_prefix}_order", list(range(len(flashcards))))
-    st.session_state.setdefault(f"{key_prefix}_wrong_counts",{})
+    st.session_state.setdefault(f"{key_prefix}_wrong_counts", {})
+
     order = st.session_state[f"{key_prefix}_order"]
     if not order:
         st.success("Deck complete — nice work!")
-        if st.button("🔁 Restart", key=f"{key_prefix}_restart_all"):
+        if st.button("🔁 Restart deck", key=f"{key_prefix}_restart_all"):
             st.session_state[f"{key_prefix}_order"]=list(range(len(flashcards)))
             st.session_state[f"{key_prefix}_idx"]=0
             st.session_state[f"{key_prefix}_revealed"]=False
             st.session_state[f"{key_prefix}_wrong_counts"]={}
             st.rerun()
         return
-    idx = st.session_state[f"{key_prefix}_idx"]; idx = max(0, min(idx, len(order)-1))
-    st.session_state[f"{key_prefix}_idx"]=idx
-    revealed = st.session_state[f"{key_prefix}_revealed"]; wrong = st.session_state[f"{key_prefix}_wrong_counts"]
+    idx = st.session_state[f"{key_prefix}_idx"]
+    idx = max(0, min(idx, len(order)-1))
+    st.session_state[f"{key_prefix}_idx"] = idx
+    revealed = st.session_state[f"{key_prefix}_revealed"]
+    wrong_counts = st.session_state[f"{key_prefix}_wrong_counts"]
+
     st.progress((idx+1)/len(order), text=f"Card {idx+1}/{len(order)}")
-    orig_i = order[idx]; card = flashcards[orig_i]
-    st.markdown("#### Front"); st.info(card.get("front",""))
-    if revealed: st.markdown("#### Back"); st.success(card.get("back",""))
+    orig_i = order[idx]
+    card = flashcards[orig_i]
+    st.markdown("#### Front")
+    st.info(card.get("front",""))
+    if revealed:
+        st.markdown("#### Back")
+        st.success(card.get("back",""))
+
     c1,c2,c3,c4 = st.columns(4)
     if c1.button("◀️ Prev", disabled=(idx==0), key=f"{key_prefix}_prev"):
-        st.session_state[f"{key_prefix}_idx"]=idx-1; st.session_state[f"{key_prefix}_revealed"]=False; st.rerun()
+        st.session_state[f"{key_prefix}_idx"]=idx-1
+        st.session_state[f"{key_prefix}_revealed"]=False
+        st.rerun()
     if c2.button("🔁 Flip", key=f"{key_prefix}_flip"):
-        st.session_state[f"{key_prefix}_revealed"]=not revealed; st.rerun()
-    if c3.button("✅ Knew it", key=f"{key_prefix}_ok"):
+        st.session_state[f"{key_prefix}_revealed"]=not revealed
+        st.rerun()
+    if c3.button("✅ I knew it", key=f"{key_prefix}_ok"):
         if item_id and "sb_user" in st.session_state:
             try: save_flash_review(item_id, True)
-            except: pass
+            except Exception: pass
         st.session_state[f"{key_prefix}_order"].pop(idx)
         st.session_state[f"{key_prefix}_revealed"]=False
-        if idx >= len(st.session_state[f"{key_prefix}_order"]): st.session_state[f"{key_prefix}_idx"]=max(0,len(st.session_state[f"{key_prefix}_order"])-1)
+        if idx >= len(st.session_state[f"{key_prefix}_order"]):
+            st.session_state[f"{key_prefix}_idx"] = max(0, len(st.session_state[f"{key_prefix}_order"])-1)
         st.rerun()
-    if c4.button("❌ Again", key=f"{key_prefix}_bad"):
+    if c4.button("❌ Show me again", key=f"{key_prefix}_bad"):
         if item_id and "sb_user" in st.session_state:
             try: save_flash_review(item_id, False)
-            except: pass
-        cnt = wrong.get(orig_i,0)
-        if cnt < 2:
-            st.session_state[f"{key_prefix}_order"].insert(min(len(order), idx+4), orig_i)
-            wrong[orig_i]=cnt+1
+            except Exception: pass
+        count = wrong_counts.get(orig_i, 0)
+        if count < 2:
+            insert_at = min(len(order), idx + 4)
+            st.session_state[f"{key_prefix}_order"].insert(insert_at, orig_i)
+            wrong_counts[orig_i] = count + 1
+        st.session_state[f"{key_prefix}_wrong_counts"]=wrong_counts
         st.session_state[f"{key_prefix}_revealed"]=False
-        if idx < len(st.session_state[f"{key_prefix}_order"])-1: st.session_state[f"{key_prefix}_idx"]=idx+1
+        if idx < len(st.session_state[f"{key_prefix}_order"]) - 1:
+            st.session_state[f"{key_prefix}_idx"]=idx+1
         st.rerun()
 
 def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_prefix="quiz", subject_hint="General"):
     st.subheader("🧪 Quiz")
-    if not questions: st.caption("No questions found."); return
-    st.session_state.setdefault(f"{key_prefix}_i",0)
-    st.session_state.setdefault(f"{key_prefix}_graded",False)
-    st.session_state.setdefault(f"{key_prefix}_feedback","")
-    st.session_state.setdefault(f"{key_prefix}_mark_last",(0,0))
-    st.session_state.setdefault(f"{key_prefix}_history",[])
-    i = st.session_state[f"{key_prefix}_i"]; i = max(0, min(i, len(questions)-1)); st.session_state[f"{key_prefix}_i"]=i
+    if not questions:
+        st.caption("No questions found."); return
+    st.session_state.setdefault(f"{key_prefix}_i", 0)
+    st.session_state.setdefault(f"{key_prefix}_graded", False)
+    st.session_state.setdefault(f"{key_prefix}_feedback", "")
+    st.session_state.setdefault(f"{key_prefix}_mark_last", (0, 0))
+    st.session_state.setdefault(f"{key_prefix}_history", [])
+    i = st.session_state[f"{key_prefix}_i"]
+    i = max(0, min(i, len(questions)-1))
+    st.session_state[f"{key_prefix}_i"] = i
     q = questions[i]
-    is_mcq = "options" in q and isinstance(q.get("options"), list)
-
     st.progress((i+1)/len(questions), text=f"Question {i+1}/{len(questions)}")
     st.markdown(f"### {q.get('question','')}")
+    ans = st.text_area("Your answer", key=f"{key_prefix}_ans_{i}", height=120, placeholder="Type your working/answer here…")
 
-    if is_mcq:
-        options = q.get("options") or []
-        choice = st.radio("Choose one", options, key=f"{key_prefix}_mcq_{i}", index=None)
-        col1,col2,col3 = st.columns(3)
-        if col1.button("Submit", key=f"{key_prefix}_mcq_submit"):
-            if choice is None:
-                st.warning("Pick an option first.")
+    colg1, colg2, colg3, colg4 = st.columns(4)
+    if colg1.button("Submit answer", key=f"{key_prefix}_submit"):
+        try:
+            result = grade_free_answer(
+                question=q.get("question",""),
+                model_answer=q.get("model_answer",""),
+                markscheme=q.get("markscheme_points", []) or [],
+                user_answer=ans or "",
+                subject=subject_hint or "General",
+            )
+            st.session_state[f"{key_prefix}_graded"] = True
+            st.session_state[f"{key_prefix}_feedback"] = result.get("feedback","")
+            last = (result.get("score",0), result.get("max_points",10))
+            st.session_state[f"{key_prefix}_mark_last"] = last
+            hist = st.session_state[f"{key_prefix}_history"]
+            if len(hist) <= i:
+                hist.append({"score": last[0], "max": last[1]})
             else:
-                correct = options.index(choice) == q.get("correct_index", -1)
-                st.session_state[f"{key_prefix}_graded"]=True
-                sc = 10 if correct else 0
-                st.session_state[f"{key_prefix}_mark_last"]=(sc,10)
-                hist = st.session_state[f"{key_prefix}_history"]
-                if len(hist)<=i: hist.append({"score": sc, "max":10})
-                else: hist[i]={"score": sc, "max":10}
-                st.success("Correct! ✅" if correct else "Not quite. ❌")
-                if q.get("explanation"): st.info(q["explanation"])
-        if col2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
-            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
-        if col3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
-            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.rerun()
-    else:
-        ans = st.text_area("Your answer", key=f"{key_prefix}_ans_{i}", height=120, placeholder="Type your working/answer here…")
-        colg1, colg2, colg3, colg4 = st.columns(4)
-        if colg1.button("Submit", key=f"{key_prefix}_submit"):
-            try:
-                result = grade_free_answer(
-                    q.get("question",""), q.get("model_answer",""),
-                    q.get("markscheme_points",[]) or [], ans or "", subject_hint or "General"
-                )
-                st.session_state[f"{key_prefix}_graded"]=True
-                st.session_state[f"{key_prefix}_mark_last"]=(result.get("score",0), result.get("max_points",10))
-                st.session_state[f"{key_prefix}_feedback"]=result.get("feedback","")
-                hist = st.session_state[f"{key_prefix}_history"]
-                if len(hist)<=i: hist.append({"score": result.get("score",0), "max": result.get("max_points",10)})
-                else: hist[i]={"score": result.get("score",0), "max": result.get("max_points",10)}
-            except Exception as e:
-                st.error(f"Grading failed: {e}")
-        if st.session_state[f"{key_prefix}_graded"]:
-            sc, mx = st.session_state[f"{key_prefix}_mark_last"]
-            st.success(f"Score for this question: {sc} / {mx}")
-            with st.expander("Model answer & mark scheme", expanded=False):
-                st.markdown(q.get("model_answer",""))
-                for pt in q.get("markscheme_points",[]) or []: st.markdown(f"- {pt}")
-            if st.session_state[f"{key_prefix}_feedback"]:
-                st.info(st.session_state[f"{key_prefix}_feedback"])
-        if colg2.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
-            st.session_state[f"{key_prefix}_i"]=i-1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
-        if colg3.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
-            st.session_state[f"{key_prefix}_i"]=i+1; st.session_state[f"{key_prefix}_graded"]=False; st.session_state[f"{key_prefix}_feedback"]=""; st.rerun()
+                hist[i] = {"score": last[0], "max": last[1]}
+        except Exception as e:
+            st.error(f"Grading failed: {e}")
+    if st.session_state[f"{key_prefix}_graded"]:
+        sc, mx = st.session_state[f"{key_prefix}_mark_last"]
+        st.success(f"Score for this question: {sc} / {mx}")
+        with st.expander("Model answer & mark scheme", expanded=False):
+            st.markdown(q.get("model_answer",""))
+            for pt in q.get("markscheme_points", []) or []:
+                st.markdown(f"- {pt}")
+        if st.session_state[f"{key_prefix}_feedback"]:
+            st.info(st.session_state[f"{key_prefix}_feedback"])
+
+    c1,c2,c3,c4 = st.columns(4)
+    if c1.button("◀️ Prev", disabled=(i==0), key=f"{key_prefix}_prev"):
+        st.session_state[f"{key_prefix}_i"]=i-1
+        st.session_state[f"{key_prefix}_graded"]=False
+        st.session_state[f"{key_prefix}_feedback"]=""
+        st.rerun()
+    if c2.button("Next ▶️", disabled=(i==len(questions)-1), key=f"{key_prefix}_next"):
+        st.session_state[f"{key_prefix}_i"]=i+1
+        st.session_state[f"{key_prefix}_graded"]=False
+        st.session_state[f"{key_prefix}_feedback"]=""
+        st.rerun()
 
     total_sc = sum(h.get("score",0) for h in st.session_state[f"{key_prefix}_history"])
-    total_mx = sum(h.get("max",0)  for h in st.session_state[f"{key_prefix}_history"])
+    total_mx = sum(h.get("max",0) for h in st.session_state[f"{key_prefix}_history"])
     st.metric("Total so far", f"{total_sc} / {total_mx or (len(questions)*10)}")
-    save_col, new_col = st.columns(2)
-    if save_col.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
+
+    if c3.button("✅ Finish & Save", key=f"{key_prefix}_finish"):
         if item_id and "sb_user" in st.session_state:
             try:
                 correct = sum(1 for h in st.session_state[f"{key_prefix}_history"] if h.get("max",0) and h.get("score",0) >= 0.7*h["max"])
-                total = len(questions); save_quiz_attempt(item_id, correct, total, st.session_state[f"{key_prefix}_history"])
+                total = len(questions)
+                save_quiz_attempt(item_id, correct, total, st.session_state[f"{key_prefix}_history"])
                 st.success(f"Attempt saved: {correct}/{total}")
             except Exception:
                 st.info("Attempt not saved (check quiz_attempts table).")
-    if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
+
+    if c4.button("🎲 Generate another quiz", key=f"{key_prefix}_regen") and item_id:
         try:
-            quiz_item = get_item(item_id); folder_id = quiz_item.get("folder_id"); subject = subject_hint or "General"
+            quiz_item = get_item(item_id)
+            folder_id = quiz_item.get("folder_id")
+            subject = subject_hint or "General"
             if folder_id:
-                siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
+                siblings = list_items(folder_id, limit=200)
+                summary = next((s for s in siblings if s.get("kind")=="summary"), None)
                 if summary and summary.get("data"):
-                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8, mode="free")
-                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
-                    st.success("New quiz created."); _set_params(item=created.get("id"), view="all"); st.rerun()
-                else: st.info("No summary found in this folder to generate from.")
-            else:     st.info("Folder not found for this quiz.")
+                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8)
+                    if new_qs:
+                        created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
+                        st.success("New quiz created.")
+                        _set_params(item=created.get("id")); st.rerun()
+                    else:
+                        st.warning("Could not generate a new quiz from notes.")
+                else:
+                    st.info("No summary found in this folder to generate from.")
+            else:
+                st.info("Folder not found for this quiz.")
         except Exception as e:
             st.error(f"Re-generate failed: {e}")
 
+# ---------- Progress computation ----------
+def build_tree(rows: List[dict]):
+    nodes = {r["id"]:{**r,"children":[]} for r in rows}
+    roots=[]
+    for r in rows:
+        pid = r.get("parent_id")
+        if pid and pid in nodes: nodes[pid]["children"].append(nodes[r["id"]])
+        else: roots.append(nodes[r["id"]])
+    return roots, nodes
 
-# ---------------- Load folders ----------------
-if "sb_user" in st.session_state:
-    try: ALL_FOLDERS = list_folders()
-    except: ALL_FOLDERS = []; st.warning("Could not load folders.")
-else:
-    ALL_FOLDERS = []
-
-def _roots(rows): return [r for r in rows if not r.get("parent_id")]  # subjects
-
-# ---------------- Item PAGE ----------------
-params = _get_params()
-if "item" in params and "sb_user" in st.session_state:
-    item_id = params.get("item")
-    if isinstance(item_id, list): item_id = item_id[0]
+def compute_topic_progress(topic_folder_id: str) -> float:
+    """0..1 based on quiz attempts + flashcard recall (40% flash, 60% quiz)."""
     try:
-        full  = get_item(item_id)
-        kind  = full.get("kind")
-        title = full.get("title") or kind.title()
-        st.title(title)
+        items = list_items(topic_folder_id, limit=500)
+        quiz_ids = [it["id"] for it in items if it["kind"]=="quiz"]
+        flash_ids = [it["id"] for it in items if it["kind"]=="flashcards"]
+        quiz_score = 0.0
+        if quiz_ids:
+            attempts = list_quiz_attempts_for_items(quiz_ids)
+            latest_per_quiz: Dict[str, Tuple[int,int]] = {}
+            for at in attempts:
+                qid = at["item_id"]
+                if qid not in latest_per_quiz:
+                    latest_per_quiz[qid] = (at["correct"], at["total"])
+            if latest_per_quiz:
+                ratios = [(c/t) if t else 0 for (c,t) in latest_per_quiz.values()]
+                quiz_score = sum(ratios)/len(ratios)
+        flash_score = 0.0
+        if flash_ids:
+            reviews = list_flash_reviews_for_items(flash_ids)
+            if reviews:
+                known = sum(1 for r in reviews if r.get("known"))
+                flash_score = known / max(1, len(reviews))
+        return 0.6*quiz_score + 0.4*flash_score
+    except Exception:
+        return 0.0
 
-        # Back -> All Resources
-        if st.button("← Back to All Resources", key="item_back_btn"):
-            _set_params(view="all"); st.rerun()
+# ---------- App routes ----------
+top_bar()
+params = _get_params()
 
-        data = full.get("data") or {}
+# Show auth modal on entry if not logged in (and not on account page)
+if not get_current_user() and params.get("account") is None and not st.session_state.get("auth_modal_shown_once"):
+    st.session_state["auth_modal_shown_once"] = True
+    st.session_state.setdefault("auth_modal_mode", "login")
+    st.session_state["auth_modal_open"] = True
 
-        if kind == "summary":
-            render_summary(data or full)
-        elif kind == "flashcards":
-            interactive_flashcards(data.get("flashcards") or [], item_id=item_id, key_prefix=f"fc_{item_id}")
-        elif kind == "quiz":
-            interactive_quiz(data.get("questions") or [], item_id=item_id, key_prefix=f"quiz_{item_id}", subject_hint="General")
+if st.session_state.get("auth_modal_open") and not get_current_user():
+    show_auth_modal(st.session_state.get("auth_modal_mode","login"))
+    st.session_state["auth_modal_open"] = False  # it will re-open if user clicks top-right buttons
+
+# My Account page
+if params.get("account"):
+    st.markdown("#### ← Back")
+    if st.button("Back", key="acc_back"):
+        _clear_params(); st.rerun()
+    user = get_current_user()
+    if not user:
+        st.info("Please log in first."); st.stop()
+    meta = (user.get("user_metadata") or {})
+    st.header("My Account")
+    st.write(f"**Email:** {user.get('email','')}")
+
+    disp = st.text_input("Display name", value=meta.get("display_name",""))
+    uname = st.text_input("Username", value=meta.get("username",""))
+    if st.button("Save profile"):
+        try:
+            update_user_metadata(display_name=disp, username=uname)
+            st.success("Profile updated.")
+        except requests.HTTPError as e:
+            st.error(getattr(e.response, "text", str(e)))
+        except Exception as e:
+            st.error(str(e))
+
+    st.subheader("Change password")
+    p1 = st.text_input("New password", type="password")
+    p2 = st.text_input("Confirm new password", type="password")
+    if st.button("Update password"):
+        if not p1 or p1 != p2:
+            st.error("Passwords do not match.")
         else:
-            st.write(data or full)
-    except Exception as e:
-        st.error(f"Could not load item: {e}")
-        if st.button("← Back to All Resources", key="item_back_btn2"):
-            _set_params(view="all"); st.rerun()
+            try:
+                change_password(p1)
+                st.success("Password updated.")
+            except requests.HTTPError as e:
+                st.error(getattr(e.response, "text", str(e)))
+            except Exception as e:
+                st.error(str(e))
     st.stop()
 
 # ---------------- Tabs ----------------
