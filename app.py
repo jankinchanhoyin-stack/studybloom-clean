@@ -1062,80 +1062,79 @@ elif view_param == "all":
 # Make sure sidebar stays open and set up page meta
 
 # --- Sidebar Styling ---
+# ----------------- Compact, responsive sidebar -----------------
 st.markdown("""
 <style>
-/* Keep sidebar expanded and clean */
+/* Hide sidebar collapse chevron */
 [data-testid="collapsedControl"] { display: none !important; }
 
-/* Centered vertical stack of icons */
-.nav-stack { display: flex; flex-direction: column; align-items: center; gap: 22px; padding-top: 12px; }
+/* Keep default Streamlit width but tidy inner padding */
+section[data-testid="stSidebar"] .block-container {
+  padding: 12px 10px 16px 10px;
+}
 
-/* Icon buttons */
-.icon-wrap { text-align: center; width: 100%; }
-.icon-wrap.active .stButton > button {
+/* Vertical stack */
+.nav-stack {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px;               /* tighter */
+  width: 100%;
+}
+
+/* Icon+label block */
+.nav-item { width: 72px; text-align: center; }
+.nav-item .stButton > button {
+  width: 40px !important;  /* smaller icons */
+  height: 40px !important;
+  font-size: 20px !important;
+  border-radius: 10px !important;
+  padding: 0 !important; line-height: 1 !important;
+}
+.nav-item.active .stButton > button {
   border: 2px solid #f87171 !important;
-  background-color: rgba(248,113,113,0.1) !important;
+  background-color: rgba(248,113,113,0.08) !important;
 }
-.icon-wrap .stButton > button {
-  width: 52px !important;
-  height: 52px !important;
-  font-size: 24px !important;
-  border-radius: 12px !important;
-  padding: 0 !important;
-}
-
-/* Labels */
-.icon-label {
-  font-size: 0.8rem;
-  text-align: center;
-  margin-top: 6px;
-  opacity: 0.85;
+.nav-label {
+  margin-top: 4px;
+  font-size: 0.74rem;      /* smaller label */
+  opacity: .85;
   white-space: nowrap;
 }
 
-/* Main area spacing (keeps content readable) */
-.block-container { padding-top: 1.5rem; padding-left: 1rem; padding-right: 1rem; }
+/* Make spacing even tighter on short viewports */
+@media (max-height: 840px) {
+  .nav-stack { gap: 10px; }
+  .nav-item .stButton > button { width: 36px !important; height: 36px !important; font-size: 18px !important; }
+  .nav-item { width: 64px; }
+  .nav-label { font-size: 0.7rem; }
+}
 </style>
 """, unsafe_allow_html=True)
 
-
-# -------------------------------
-# Navigation Item Helper Function
-# -------------------------------
-def nav_item(icon: str, label: str, view_name: str | None, key: str, active: bool = False):
-    css_class = "icon-wrap active" if active else "icon-wrap"
-    st.markdown(f"<div class='{css_class}'>", unsafe_allow_html=True)
+def _nav(icon: str, label: str, view: str|None, key: str, active: bool=False):
+    cls = "nav-item active" if active else "nav-item"
+    st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
     if st.button(icon, key=key):
-        _set_params(view=view_name)
-        st.rerun()
-    st.markdown(f"<div class='icon-label'>{label}</div></div>", unsafe_allow_html=True)
+        _set_params(view=view); st.rerun()
+    st.markdown(f"<div class='nav-label'>{label}</div></div>", unsafe_allow_html=True)
 
+# Current view
+_v = _get_params().get("view")
+view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
-# Determine the current page from URL params
-_view_param = _get_params().get("view")
-view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
-
-
-# ------------------------
-# Sidebar Navigation Stack
-# ------------------------
 with st.sidebar:
     st.markdown("<div class='nav-stack'>", unsafe_allow_html=True)
-    nav_item("🏠", "Home", None, key="nav_home", active=(view_param == ""))
-    nav_item("🧭", "Resources", "resources", key="nav_res", active=(view_param == "resources"))
-    nav_item("🗂️", "All", "all", key="nav_all", active=(view_param == "all"))
+    _nav("🏠", "Home", None,        key="nav_home", active=(view_param==""))
+    _nav("🧭", "Resources", "resources", key="nav_res",  active=(view_param=="resources"))
+    _nav("🗂️", "All",   "all",      key="nav_all",  active=(view_param=="all"))
     st.markdown("</div>", unsafe_allow_html=True)
 
-
-# --------------------------
-# ROUTER: Show Correct Page
-# --------------------------
+# Router (unchanged)
 if view_param == "resources":
-    render_resources_page()
-    st.stop()
+    render_resources_page(); st.stop()
 elif view_param == "all":
-    render_all_resources_page()
-    st.stop()
+    render_all_resources_page(); st.stop()
+# else: fall through to Quick Study
+
 
 
 # ======================================================
