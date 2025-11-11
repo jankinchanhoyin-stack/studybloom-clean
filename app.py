@@ -1368,6 +1368,49 @@ else:
         key="qs_files",
     )
 
+    def _autosize_counts(raw_text: str, detail: int, mode: str) -> tuple[int, int]:
+        """
+        Decide (flashcards, questions) based on input size and desired detail.
+        Uses words as a proxy for content. Caps for practicality.
+        """
+        w = max(0, len((raw_text or "").split()))
+        # Baseline buckets (tune as you like)
+        if w < 600:
+            fc_min, fc_max = 8, 14
+            q_min, q_max = 4, 6
+        elif w < 1500:
+            fc_min, fc_max = 15, 24
+            q_min, q_max = 7, 10
+        elif w < 4000:
+            fc_min, fc_max = 25, 40
+            q_min, q_max = 11, 16
+        elif w < 9000:
+            fc_min, fc_max = 41, 60
+            q_min, q_max = 17, 22
+        else:
+            fc_min, fc_max = 61, 80
+            q_min, q_max = 23, 28
+    
+        # Nudge by detail slider (1..5): +/- ~20% span
+        factor = 1 + (detail - 3) * 0.1  # 0.8 .. 1.2
+        import math, random
+        fc = int(math.ceil(fc_min * factor))
+        q  = int(math.ceil(q_min * factor))
+    
+        # If MCQ, slightly raise count (they’re faster to answer)
+        if mode.lower().startswith("multiple"):
+            q = int(q * 1.15)
+    
+        # Bound within bucket
+        fc = min(max(fc, fc_min), fc_max)
+        q  = min(max(q, q_min),  q_max)
+    
+        # Global caps
+        fc = min(fc, 80)
+        q  = min(q, 28)
+        return fc, q
+
+
     # --- What to generate ---
     st.markdown("### What to generate")
     sel_notes = st.checkbox("📄 Notes", value=True, key="qs_sel_notes")
@@ -1427,36 +1470,39 @@ else:
         prog = st.progress(0, text="Starting…")
         try:
             prog.progress(10, text="Extracting text…")
-            text = extract_any(files)
-            if not text.strip():
-                st.error("No text detected in the uploaded files.")
-                st.stop()
-
-            prog.progress(35, text="Summarising with AI…")
-            data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-
-            summary_id = flash_id = quiz_id = None
-
-            if sel_flash:
-                prog.progress(55, text="Generating flashcards…")
-                try:
-                    cards = generate_flashcards_from_notes(data, audience=audience)
-                except Exception as e:
-                    st.warning(f"Flashcards skipped: {e}")
-                    cards = []
-
-            if sel_quiz:
-                prog.progress(70, text="Generating quiz…")
-                qs = generate_quiz_from_notes(
-                    data,
-                    subject=subject_hint,
-                    audience=audience,
-                    num_questions=8,
-                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
-                    mcq_options=mcq_options,
-                )
-            else:
-                qs = None
+    text = extract_any(files)
+    if not text.strip():
+        st.error("No text detected in the uploaded files.")
+        st.stop()
+    
+    # Decide sizes automatically from text length + detail + quiz mode
+    auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
+    
+    prog.progress(35, text=f"Summarising with AI…")
+    data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
+    
+    summary_id = flash_id = quiz_id = None
+    
+    if sel_flash:
+        prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
+        try:
+            cards = generate_flashcards_from_notes(data, audience=audience, target_count=auto_fc)
+        except Exception as e:
+            st.warning(f"Flashcards skipped: {e}")
+            cards = []
+    
+    if sel_quiz:
+        prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
+        qs = generate_quiz_from_notes(
+            data,
+            subject=subject_hint,
+            audience=audience,
+            num_questions=auto_qs,
+            mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+            mcq_options=mcq_options,
+        )
+    else:
+        qs = None
 
             prog.progress(85, text="Saving selected items…")
 
