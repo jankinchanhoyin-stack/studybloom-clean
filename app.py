@@ -27,7 +27,7 @@ from auth_rest import (
     save_flash_review, list_flash_reviews_for_items,
     current_user, update_profile, change_password, _current_user_id, _iso_start_of_today_utc,
     _iso_start_of_tomorrow_utc, _iso_start_of_month_utc, _iso_start_of_next_month_utc, sb_find_profile_by_username,
-    sb_add_friend, sb_list_friends_with_profiles, sb_sum_xp_for_window, sb_get_xp_totals_for_user
+    sb_add_friend, sb_list_friends_with_profiles, sb_sum_xp_for_window, sb_get_xp_totals_for_user, _sb_headers
 )
 
 
