@@ -652,187 +652,255 @@ view = (_get_params().get("view") or [""])[0] if isinstance(_get_params().get("v
 default_idx = 2 if view == "all" else (1 if view == "resources" else 0)
 tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 
-# ===== Quick Study =====
+# ===== Quick Study (Step-by-step) =====
 with tabs[0]:
     st.title("⚡ Quick Study")
+
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
-        subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
+        # -------- state setup --------
+        st.session_state.setdefault("qs_step", 0)                  # 0..5
+        st.session_state.setdefault("qs_subject_id", None)
+        st.session_state.setdefault("qs_exam_id", None)
 
-        # Subject
-        st.markdown("### Subject")
-        make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
-        subject_id = None
-        if make_new_subject:
-            new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
-            if st.button("Save subject", key="qs_save_subject_btn"):
-                name = (new_subject or "").strip()
-                if not name: st.warning("Enter a subject name.")
-                elif name.lower() in {n.lower() for n in subj_names}:
-                    st.error("This subject already exists. Please use a different name.")
-                else:
-                    create_folder(name, None); st.success("Subject created."); st.rerun()
-        else:
-            subj_pick = st.selectbox("Use existing subject", ["— select —"]+subj_names, key="qs_subject_pick")
-            if subj_pick in subj_names:
-                subject_id = next(s["id"] for s in subjects if s["name"]==subj_pick)
+        try:
+            ALL_FOLDERS = list_folders()
+        except Exception:
+            ALL_FOLDERS = []
 
-        # Exam
-        st.markdown("### Exam")
-        exam_id = None
-        if subject_id:
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subject_id]
-            exam_names = [e["name"] for e in exams]
-            make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
-            if make_new_exam:
-                new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
-                if st.button("Save exam", key="qs_save_exam_btn"):
-                    name = (new_exam or "").strip()
-                    if not name: st.warning("Enter an exam name.")
-                    elif name.lower() in {n.lower() for n in exam_names}:
-                        st.error("This exam already exists under that subject.")
-                    else:
-                        create_folder(name, subject_id); st.success("Exam created."); st.rerun()
+        def _roots(rows): return [r for r in rows if not r.get("parent_id")]
+        subjects = _roots(ALL_FOLDERS)
+        subj_names = [s["name"] for s in subjects]
+
+        # convenience resolvers
+        def _subject_id_from_name(name: str | None) -> str | None:
+            if not name: return None
+            row = next((s for s in subjects if s["name"] == name), None)
+            return row["id"] if row else None
+
+        def _exams_for_subject(sid: str | None):
+            if not sid: return []
+            return [f for f in ALL_FOLDERS if f.get("parent_id") == sid]
+
+        # ------- step UI helpers -------
+        def _nav(prev_ok=True, next_ok=True, show_back=True, show_next=True, next_label="Next"):
+            c1, c2 = st.columns([1,1])
+            if show_back:
+                if c1.button("← Back", use_container_width=True):
+                    st.session_state["qs_step"] = max(0, st.session_state["qs_step"] - 1)
+                    st.rerun()
             else:
-                ex_pick = st.selectbox("Use existing exam", ["— select —"]+exam_names, key="qs_exam_pick")
-                if ex_pick in exam_names:
-                    exam_id = next(e["id"] for e in exams if e["name"]==ex_pick)
-        else:
-            st.caption("Pick or create a Subject first to reveal Exams.")
+                c1.write("")  # spacer
+            if show_next:
+                c2.button(next_label, type="primary", use_container_width=True, disabled=not next_ok, on_click=lambda: st.session_state.update(qs_step=st.session_state["qs_step"]+1) or st.rerun())
 
-        # Topic: Always new (no save yet)
-        st.markdown("### Topic")
-        topic_name_input = ""
-        if exam_id:
+        # ---------- STEP 0: Subject ----------
+        if st.session_state["qs_step"] == 0:
+            st.header("1) Subject")
+            mode_new = st.radio("Choose how to set the subject", ["Use existing", "Create new"], horizontal=True, key="qs_mode_subject", index=0)
+
+            subject_ok = False
+            if mode_new == "Create new":
+                new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
+                subject_ok = bool((new_subject or "").strip())
+                _nav(prev_ok=False, next_ok=subject_ok, show_back=False)
+                if subject_ok:
+                    # don’t create yet; just remember the intention
+                    st.session_state["qs_subject_id"] = None
+            else:
+                subj_pick = st.selectbox("Use existing subject", ["— select —"] + subj_names, key="qs_subject_pick")
+                subject_ok = subj_pick in subj_names
+                if subject_ok:
+                    st.session_state["qs_subject_id"] = _subject_id_from_name(subj_pick)
+                _nav(prev_ok=False, next_ok=subject_ok, show_back=False)
+
+        # ---------- STEP 1: Exam ----------
+        elif st.session_state["qs_step"] == 1:
+            st.header("2) Exam")
+            # Resolve subject ID if user chose "new" last step — we still allow deferring creation to generation time
+            sid = st.session_state.get("qs_subject_id")
+            subj_is_new = (st.session_state.get("qs_mode_subject") == "Create new")
+            if not sid and not subj_is_new:
+                st.warning("Please pick or create a subject first.")
+                st.session_state["qs_step"] = 0
+                st.rerun()
+
+            exams = _exams_for_subject(sid) if sid else []
+            exam_names = [e["name"] for e in exams]
+            mode_new_exam = st.radio("Choose how to set the exam", ["Use existing", "Create new"], horizontal=True, key="qs_mode_exam", index=0 if exam_names else 1)
+
+            exam_ok = False
+            if mode_new_exam == "Create new":
+                new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
+                exam_ok = bool((new_exam or "").strip())
+                _nav(next_ok=exam_ok)
+                if exam_ok:
+                    st.session_state["qs_exam_id"] = None
+            else:
+                ex_pick = st.selectbox("Use existing exam", ["— select —"] + exam_names, key="qs_exam_pick")
+                exam_ok = ex_pick in exam_names
+                if exam_ok:
+                    st.session_state["qs_exam_id"] = next(e["id"] for e in exams if e["name"]==ex_pick)
+                _nav(next_ok=exam_ok)
+
+        # ---------- STEP 2: Topic ----------
+        elif st.session_state["qs_step"] == 2:
+            st.header("3) Topic")
+            topic_ok = False
             topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
-        else:
-            st.caption("Pick or create an Exam first to add a Topic.")
+            topic_ok = bool((topic_name_input or "").strip())
+            _nav(next_ok=topic_ok)
 
-        st.markdown("---")
-        st.markdown("**Subject (free text, improves accuracy & quality):**")
-        subject_hint = st.text_input(
-            "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
-            value="General",
-            key="qs_subject_hint"
-        )
+        # ---------- STEP 3: Subject hint / audience / detail ----------
+        elif st.session_state["qs_step"] == 3:
+            st.header("4) Subject context")
+            subject_hint = st.text_input("Subject (free text, improves quality)", value=st.session_state.get("qs_subject_hint", "General"), key="qs_subject_hint")
+            audience_label = st.selectbox("Audience", ["University","A-Level","IB","GCSE","HKDSE","Primary"], index={"University":0,"A-Level":1,"IB":2,"GCSE":3,"HKDSE":4,"Primary":5}[st.session_state.get("qs_audience_label","University")], key="qs_audience_label")
+            detail = st.slider("Detail level", 1, 5, st.session_state.get("qs_detail", 3), key="qs_detail")
+            # basic validation: any non-empty hint is fine
+            _nav(next_ok=bool((subject_hint or "").strip()))
 
-        audience_label = st.selectbox("Audience", ["University","A-Level","IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
-        aud_map = {"University":"university","A-Level":"A-Level","IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
-        audience = aud_map.get(audience_label,"high school")
-        detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
+        # ---------- STEP 4: Quiz type ----------
+        elif st.session_state["qs_step"] == 4:
+            st.header("5) Quiz settings")
+            quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0 if st.session_state.get("qs_quiz_mode","Free response")=="Free response" else 1, horizontal=True, key="qs_quiz_mode")
+            if quiz_mode == "Multiple choice":
+                st.slider("MCQ options per question", 3, 6, st.session_state.get("qs_mcq_opts",4), key="qs_mcq_opts")
+            _nav(next_ok=True)
 
-        st.markdown("### Quiz type")
-        quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode")
-        mcq_options = 4
-        if quiz_mode == "Multiple choice":
-            mcq_options = st.slider("MCQ options per question", 3, 6, 4, key="qs_mcq_opts")
+        # ---------- STEP 5: Files + Generate ----------
+        elif st.session_state["qs_step"] == 5:
+            st.header("6) Upload & Generate")
+            files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
+                                     type=["pdf","pptx","jpg","jpeg","png","txt"],
+                                     accept_multiple_files=True, key="qs_files")
+            has_files = bool(files)
 
-        files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
-                                 type=["pdf","pptx","jpg","jpeg","png","txt"], accept_multiple_files=True, key="qs_files")
+            # Validate readiness
+            subj_new = (st.session_state.get("qs_mode_subject") == "Create new")
+            exam_new = (st.session_state.get("qs_mode_exam") == "Create new")
+            subject_ok   = subj_new or bool(st.session_state.get("qs_subject_id"))
+            exam_ok      = exam_new or bool(st.session_state.get("qs_exam_id"))
+            topic_ok     = bool((st.session_state.get("qs_new_topic") or "").strip())
+            hint_ok      = bool((st.session_state.get("qs_subject_hint") or "").strip())
+            audience_ok  = True
+            ready = subject_ok and exam_ok and topic_ok and hint_ok and audience_ok and has_files
 
-        # Gate the generate button until all required inputs exist
-        has_subject = bool(subject_id or st.session_state.get("qs_new_subject"))
-        has_exam = bool(exam_id or st.session_state.get("qs_new_exam"))
-        has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
-        has_files = bool(files)
-        has_audience = bool(audience)
+            # Generate button
+            gen_clicked = st.button(
+                "Generate Notes + Flashcards + Quiz",
+                type="primary",
+                disabled=not ready,
+                key="qs_generate_btn"
+            )
 
-        can_generate = (subject_id is not None) and (exam_id is not None) and has_topic_text and has_files and has_audience
+            # ---------- pipeline (unchanged, but with on-demand folder creation) ----------
+            if gen_clicked and ready:
+                # 1) Resolve or create subject
+                subject_id = st.session_state.get("qs_subject_id")
+                if subj_new:
+                    name = (st.session_state.get("qs_new_subject") or "").strip()
+                    # prevent dup by case-insensitive name
+                    if name.lower() in {n.lower() for n in subj_names}:
+                        subject_id = _subject_id_from_name(next(n for n in subj_names if n.lower()==name.lower()))
+                    else:
+                        created = create_folder(name, None)
+                        subject_id = created["id"]
 
-        gen_clicked = st.button(
-            "Generate Notes + Flashcards + Quiz",
-            type="primary",
-            key="qs_generate_btn",
-            disabled=not can_generate
-        )
+                # 2) Resolve or create exam
+                exams = _exams_for_subject(subject_id)
+                exam_names = [e["name"] for e in exams]
+                exam_id = st.session_state.get("qs_exam_id")
+                if exam_new:
+                    new_exam = (st.session_state.get("qs_new_exam") or "").strip()
+                    if new_exam.lower() in {n.lower() for n in exam_names}:
+                        exam_id = next(e["id"] for e in exams if e["name"].lower()==new_exam.lower())
+                    else:
+                        created = create_folder(new_exam, subject_id)
+                        exam_id = created["id"]
 
-        if gen_clicked and can_generate:
-            # Resolve destination folders freshly
-            subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
-            subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
-            exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
-            exam_map = {e["name"]: e["id"] for e in exams}
-            exam_id = exam_map.get(st.session_state.get("qs_exam_pick"), exam_id)
-
-            # Create the topic now (and catch clashes)
-            topic_id = None
-            topic_name = (st.session_state.get("qs_new_topic") or "").strip()
-            if exam_id and topic_name:
+                # 3) Topic folder (create always on generate)
+                topic_name = (st.session_state.get("qs_new_topic") or "").strip()
                 existing_topics = [f for f in list_folders() if f.get("parent_id")==exam_id]
                 if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
                     st.error("Topic already exists under this exam. Please choose a different name.")
                     st.stop()
-                created = create_folder(topic_name, exam_id)
-                topic_id = created["id"]
-                topic_name = created["name"]
+                created_topic = create_folder(topic_name, exam_id)
+                topic_id = created_topic["id"]
+                topic_name = created_topic["name"]
 
-            dest_folder = topic_id or exam_id or subject_id or None
+                # 4) Context
+                aud_map = {"University":"university","A-Level":"A-Level","IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
+                audience = aud_map.get(st.session_state.get("qs_audience_label","University"), "high school")
+                subject_hint = st.session_state.get("qs_subject_hint","General")
+                detail = st.session_state.get("qs_detail",3)
+                quiz_mode = st.session_state.get("qs_quiz_mode","Free response")
+                mcq_options = st.session_state.get("qs_mcq_opts",4)
 
-            # Base title (Topic > Exam > Subject > subject_hint)
-            base_title = (
-                topic_name
-                or (next((e["name"] for e in exams if e["id"]==exam_id), None) if exam_id else None)
-                or (next((s["name"] for s in subjects if s["id"]==subject_id), None) if subject_id else None)
-                or (subject_hint or "Study Pack")
-            )
-
-            prog = st.progress(0, text="Starting…")
-            try:
-                prog.progress(10, text="Extracting text…")
-                text = extract_any(files)
-                if not text.strip():
-                    st.error("No text detected in the uploaded files.")
-                    st.stop()
-
-                prog.progress(35, text="Summarising with AI…")
-                data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
-
-                prog.progress(60, text="Generating flashcards & quiz…")
-                cards = []
+                # 5) Extract + generate (your existing pipeline)
+                prog = st.progress(0, text="Starting…")
                 try:
-                    cards = generate_flashcards_from_notes(data, audience=audience)
+                    prog.progress(10, text="Extracting text…")
+                    text = extract_any(files)
+                    if not text.strip():
+                        st.error("No text detected in the uploaded files.")
+                        st.stop()
+
+                    prog.progress(35, text="Summarising with AI…")
+                    data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
+
+                    prog.progress(60, text="Generating flashcards & quiz…")
+                    cards = []
+                    try:
+                        cards = generate_flashcards_from_notes(data, audience=audience)
+                    except Exception as e:
+                        st.warning(f"Flashcards skipped: {e}")
+
+                    qs = generate_quiz_from_notes(
+                        data, subject=subject_hint, audience=audience,
+                        num_questions=8, mode=("mcq" if quiz_mode=="Multiple choice" else "free"),
+                        mcq_options=mcq_options
+                    )
+
+                    prog.progress(85, text="Saving items…")
+                    base_title = topic_name or subject_hint or "Study Pack"
+                    title_notes = f"📄 {base_title} — Notes"
+                    title_flash = f"🧠 {base_title} — Flashcards"
+                    title_quiz  = f"🧪 {base_title} — Quiz"
+
+                    summary = save_item("summary", title_notes, data, topic_id)
+                    summary_id = summary.get("id")
+                    flash_id = quiz_id = None
+
+                    if cards:
+                        flash = save_item("flashcards", title_flash, {"flashcards": cards}, topic_id)
+                        flash_id = flash.get("id")
+
+                    quiz_payload = {"questions": qs}
+                    if quiz_mode == "Multiple choice":
+                        quiz_payload["type"] = "mcq"
+                    quiz_item = save_item("quiz", title_quiz, quiz_payload, topic_id)
+                    quiz_id = quiz_item.get("id")
+
+                    prog.progress(100, text="Done!")
+                    st.success("Saved ✅")
+
+                    st.markdown("### Open")
+                    c1,c2,c3 = st.columns(3)
+                    if summary_id and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
+                        _set_params(item=summary_id, view="all"); st.rerun()
+                    if flash_id and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
+                        _set_params(item=flash_id, view="all"); st.rerun()
+                    if quiz_id  and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
+                        _set_params(item=quiz_id, view="all"); st.rerun()
+
                 except Exception as e:
-                    st.warning(f"Flashcards skipped: {e}")
+                    st.error(f"Generation failed: {e}")
 
-                qs = generate_quiz_from_notes(
-                    data, subject=subject_hint, audience=audience,
-                    num_questions=8, mode=("mcq" if quiz_mode=="Multiple choice" else "free"),
-                    mcq_options=mcq_options
-                )
+            # Back/Next at bottom of final step (Next disabled)
+            _nav(next_ok=False, next_label="Next")
 
-                prog.progress(85, text="Saving items…")
-                title_notes = f"📄 {base_title} — Notes"
-                title_flash = f"🧠 {base_title} — Flashcards"
-                title_quiz  = f"🧪 {base_title} — Quiz"
-
-                summary = save_item("summary", title_notes, data, dest_folder)
-                summary_id = summary.get("id")
-                flash_id = quiz_id = None
-
-                if cards:
-                    flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
-                    flash_id = flash.get("id")
-
-                quiz_payload = {"questions": qs}
-                if quiz_mode == "Multiple choice":
-                    quiz_payload["type"] = "mcq"
-                quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
-                quiz_id = quiz_item.get("id")
-
-                prog.progress(100, text="Done!")
-                st.success("Saved ✅")
-
-                st.markdown("### Open")
-                c1,c2,c3 = st.columns(3)
-                if summary_id and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
-                    _set_params(item=summary_id, view="all"); st.rerun()
-                if flash_id and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
-                    _set_params(item=flash_id, view="all"); st.rerun()
-                if quiz_id  and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
-                    _set_params(item=quiz_id, view="all"); st.rerun()
-            except Exception as e:
-                st.error(f"Generation failed: {e}")
 
 # ===== Resources =====
 with tabs[1]:
