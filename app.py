@@ -1008,16 +1008,15 @@ if is_account:
     # --- CSS tweaks ---
     st.markdown("""
     <style>
-    /* Remove white bar background and give nice rounded progress bar */
-    .stProgress > div {
-        background-color: rgba(255,255,255,0.05) !important;
+    /* Keep one clean blue bar with subtle transparent background */
+    .stProgress > div[data-testid="stProgressBar"] {
+        background-color: transparent !important;
+    }
+    .stProgress > div[data-testid="stProgressBar"] > div {
+        background-color: #2563eb !important; /* blue fill */
         border-radius: 10px !important;
     }
-    .stProgress > div > div {
-        background-color: #2563eb !important;  /* Tailwind blue-600 */
-        border-radius: 10px !important;
-    }
-    /* XP container styling */
+    /* Keep XP containers clean and subtle */
     .xp-box {
         border: 1px solid rgba(255,255,255,0.08);
         border-radius: 10px;
@@ -1026,6 +1025,7 @@ if is_account:
     }
     </style>
     """, unsafe_allow_html=True)
+
     
     # --- Layout ---
     with st.container():
