@@ -297,11 +297,18 @@ def _get_params() -> Dict[str, str]:
     except: return st.experimental_get_query_params()
 
 def _set_params(**kwargs):
+    clean = {k: v for k, v in kwargs.items() if v not in (None, "", [], {})}
     try:
         st.query_params.clear()
-        st.query_params.update(kwargs)
+        if clean:
+            st.query_params.update(clean)
     except Exception:
-        st.experimental_set_query_params(**kwargs)
+        # Streamlit <1.30 fallback
+        st.experimental_set_query_params(**clean)
+
+def _go_home():
+    _set_params(view="home")
+    st.rerun()
 
 # ---------------- Supabase REST helpers ----------------
 def _sb_headers():
@@ -1088,9 +1095,8 @@ is_account = (params.get("view") == "account") or (
 if is_account:
     # Top row: Back
     back_col, _ = st.columns([1, 9])
-    if back_col.button("← Back", key="acct_back"):
-        _set_params(view=None)
-        st.rerun()
+    if bcol.button("← Back", key="acct_back"):
+        _go_home()
 
     st.title("My Account")
 
@@ -1466,8 +1472,7 @@ def render_resources_page():
     # ← Home (top-left)
     bcol, _ = st.columns([1, 9])
     if bcol.button("← Home", f"nav_home"):
-        _set_params(view=None)
-        st.rerun()
+        _go_home()
 
     st.markdown("## 🧭 Resources — Folder Explorer")
 
@@ -1691,7 +1696,7 @@ def render_all_resources_page():
     # --------- Header / Back ---------
     top_l, _ = st.columns([1, 9])
     if top_l.button("← Home", key="all_back_home"):
-        _set_params(view=None); st.rerun()
+        _go_home()
 
     st.markdown("## 🗂️ All Resources (Newest)")
 
@@ -1928,7 +1933,20 @@ def _nav_row(label_with_emoji: str, target_view: str|None, key: str, active: boo
     st.markdown("</div>", unsafe_allow_html=True)
 
 _v = _get_params().get("view")
-view_param = (_v[0] if isinstance(_v, list) else _v) or ""
+view_param = (_v[0] if isinstance(_v, list) else _v) or "home"  # <= default to home
+
+if view_param == "resources":
+    render_resources_page(); st.stop()
+elif view_param == "all":
+    render_all_resources_page(); st.stop()
+elif view_param == "community":
+    render_community_page(); st.stop()
+elif view_param == "account":
+    # your account page logic here (if not already above)
+    pass
+else:
+    # Default page = Quick Study
+    render_quick_study_page(); st.stop()
 
 with st.sidebar:
     st.markdown("<div class='nav-list'>", unsafe_allow_html=True)
