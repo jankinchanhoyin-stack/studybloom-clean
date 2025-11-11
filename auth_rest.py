@@ -421,55 +421,6 @@ def sb_add_friend(friend_username: str) -> tuple[bool, str]:
             msg = r.text
         return False, f"Could not add friend: {msg}"
 
-def sb_list_friends_with_profiles() -> list[dict]:
-    """
-    Returns a list of {"friend_id", "username", "display_name"} for the current user’s friends.
-    Expects a 'friends' table with (user_id, friend_user_id) and a 'profiles' table with (user_id, username, display_name).
-    """
-    # You need the current user id available here; adapt if you use a different getter.
-    me = (st.session_state.get("sb_user") or {}).get("user") or {}
-    me_id = me.get("id")
-    if not me_id:
-        return []
-
-    url, headers = _sb_headers()
-
-    # 1) fetch friend IDs
-    r = requests.get(
-        f"{url}/rest/v1/friends?user_id=eq.{me_id}&select=friend_user_id",
-        headers=headers,
-        timeout=20
-    )
-    if r.status_code != 200:
-        return []
-
-    friend_ids = [row.get("friend_user_id") for row in r.json() if row.get("friend_user_id")]
-    if not friend_ids:
-        return []
-
-    # 2) fetch profile info for those IDs via IN filter
-    # Build a comma-separated list wrapped in parentheses for 'in.()' filter
-    in_clause = ",".join(friend_ids)
-    r2 = requests.get(
-        f"{url}/rest/v1/profiles?user_id=in.({in_clause})&select=user_id,username,display_name",
-        headers=headers,
-        timeout=20
-    )
-    if r2.status_code != 200:
-        return []
-
-    profiles = r2.json()
-    # Normalize output shape
-    out = []
-    for p in profiles:
-        out.append({
-            "friend_id": p.get("user_id"),
-            "username": p.get("username") or "",
-            "display_name": p.get("display_name") or "",
-        })
-    return out
-
-
 
 def sb_sum_xp_for_window(user_id: str, start_iso: str, end_iso: str) -> int:
     url, headers = _sb_headers()
