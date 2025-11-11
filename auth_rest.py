@@ -671,6 +671,246 @@ def sb_cancel_outgoing_request(request_id: str) -> str:
     d.raise_for_status()
     return "Request cancelled."
 
+# ==== Flexible profiles + friends helpers (drop-in) ====
+import streamlit as st
+import requests
+from typing import Optional, Tuple
+
+# Reuse your existing _sb_headers or define if missing
+def _sb_headers() -> Tuple[str, dict]:
+    url = st.secrets.get("SUPABASE_URL")
+    key = (st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+           or st.secrets.get("SUPABASE_KEY")
+           or st.secrets.get("SUPABASE_ANON_KEY"))
+    if not url or not key:
+        raise RuntimeError("Missing SUPABASE_URL / key in secrets.")
+    return url, {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+def _me_id() -> Optional[str]:
+    user = (st.session_state.get("sb_user") or {}).get("user") or {}
+    return user.get("id") or user.get("user_id") or None
+
+# ---- Detect profiles schema (cache in session_state) ----
+def _detect_profile_columns() -> Tuple[str, str, str]:
+    """
+    Returns (id_col, username_col, display_col).
+    Tries common variants: id/user_id, username/user_name, display_name/full_name/name.
+    Cached in session_state to avoid repeated requests.
+    """
+    cache_key = "_profiles_schema_cols"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    url, headers = _sb_headers()
+    # Fetch one row with select=*, limit=1 to learn the columns
+    r = requests.get(
+        f"{url}/rest/v1/profiles",
+        headers=headers,
+        params={"select": "*", "limit": 1},
+        timeout=20,
+    )
+    if r.status_code in (401, 403):
+        raise RuntimeError("RLS/policy blocks reading profiles. Allow SELECT to authenticated users.")
+    r.raise_for_status()
+    rows = r.json()
+    cols = set(rows[0].keys()) if rows else set()  # if table empty, we still can't introspect exact names
+
+    # heuristics
+    id_col = "id" if "id" in cols else ("user_id" if "user_id" in cols else "id")
+    username_col = (
+        "username" if "username" in cols else
+        ("user_name" if "user_name" in cols else "username")
+    )
+    display_col = (
+        "display_name" if "display_name" in cols else
+        ("full_name" if "full_name" in cols else
+         ("name" if "name" in cols else username_col))
+    )
+
+    st.session_state[cache_key] = (id_col, username_col, display_col)
+    return id_col, username_col, display_col
+
+# ---------- PROFILES ----------
+def sb_find_profile_by_username(username: str) -> Optional[dict]:
+    """
+    Look up a profile by username (column name auto-detected).
+    Returns dict with the detected id/username/display fields.
+    """
+    if not username:
+        return None
+    url, headers = _sb_headers()
+    id_col, username_col, display_col = _detect_profile_columns()
+
+    params = {
+        username_col: f"eq.{username}",
+        "select": f"{id_col},{username_col},{display_col}",
+        "limit": 1,
+    }
+    r = requests.get(f"{url}/rest/v1/profiles", headers=headers, params=params, timeout=20)
+    if r.status_code in (401, 403):
+        raise RuntimeError("RLS/policy blocks reading profiles. Allow SELECT to authenticated users.")
+    r.raise_for_status()
+    rows = r.json()
+    return rows[0] if rows else None
+
+# ---------- FRIEND REQUESTS ----------
+def sb_send_friend_request(target_username: str) -> str:
+    """
+    Create a 'pending' friend request to target_username.
+    friend_requests: id, requester_id, recipient_id, status ('pending'|'accepted'|'rejected')
+    """
+    me = _me_id()
+    if not me:
+        return "Please sign in first."
+    url, headers = _sb_headers()
+    id_col, username_col, display_col = _detect_profile_columns()
+
+    # 1) Find recipient by username
+    target = sb_find_profile_by_username((target_username or "").strip())
+    if not target:
+        return "No user with that username."
+    recipient_id = target[id_col]
+    if recipient_id == me:
+        return "You can’t send a request to yourself."
+
+    # 2) Duplicate check for pending in either direction
+    dup_params = {
+        "or": f"(and(requester_id.eq.{me},recipient_id.eq.{recipient_id}),and(requester_id.eq.{recipient_id},recipient_id.eq.{me}))",
+        "status": "eq.pending",
+        "select": "id",
+        "limit": 1,
+    }
+    dup = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=dup_params, timeout=20)
+    dup.raise_for_status()
+    if dup.json():
+        return "A pending request already exists."
+
+    # 3) Insert pending
+    payload = {"requester_id": me, "recipient_id": recipient_id, "status": "pending"}
+    ins = requests.post(f"{url}/rest/v1/friend_requests", headers=headers, json=payload, timeout=20)
+    if ins.status_code in (401, 403):
+        return "You’re not allowed to create friend requests. Check RLS policies."
+    ins.raise_for_status()
+    return "Friend request sent."
+
+def sb_list_friend_requests(direction: str = "incoming") -> list[dict]:
+    """
+    List pending friend requests for current user with basic profile info.
+    direction: 'incoming' or 'outgoing'
+    """
+    me = _me_id()
+    if not me:
+        return []
+    url, headers = _sb_headers()
+    id_col, username_col, display_col = _detect_profile_columns()
+
+    base = {"status": "eq.pending", "select": "id,status,requester_id,recipient_id"}
+    if direction == "incoming":
+        base["recipient_id"] = f"eq.{me}"
+    else:
+        base["requester_id"] = f"eq.{me}"
+
+    r = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=base, timeout=20)
+    r.raise_for_status()
+    rows = r.json()
+
+    # enrich
+    def _profile(uid: str) -> dict:
+        pr = requests.get(
+            f"{url}/rest/v1/profiles",
+            headers=headers,
+            params={"select": f"{id_col},{username_col},{display_col}", id_col: f"eq.{uid}", "limit": 1},
+            timeout=20,
+        )
+        pr.raise_for_status()
+        arr = pr.json()
+        return arr[0] if arr else {id_col: uid, username_col: "unknown", display_col: ""}
+
+    for row in rows:
+        row["requester"] = _profile(row["requester_id"])
+        row["recipient"] = _profile(row["recipient_id"])
+    return rows
+
+def sb_respond_friend_request(req_id: str, accept: bool) -> str:
+    me = _me_id()
+    if not me:
+        return "Please sign in first."
+    url, headers = _sb_headers()
+
+    getr = requests.get(
+        f"{url}/rest/v1/friend_requests",
+        headers=headers,
+        params={"id": f"eq.{req_id}", "select": "id,recipient_id,status", "limit": 1},
+        timeout=20,
+    )
+    getr.raise_for_status()
+    arr = getr.json()
+    if not arr:
+        return "Request not found."
+    row = arr[0]
+    if row["recipient_id"] != me:
+        return "Only the recipient can respond."
+    if row.get("status") != "pending":
+        return "This request is not pending."
+
+    new_status = "accepted" if accept else "rejected"
+    upd = requests.patch(
+        f"{url}/rest/v1/friend_requests",
+        headers=headers,
+        params={"id": f"eq.{req_id}"},
+        json={"status": new_status},
+        timeout=20,
+    )
+    upd.raise_for_status()
+    return "Accepted." if accept else "Rejected."
+
+def sb_list_friends_with_profiles() -> list[dict]:
+    """
+    Return accepted friends as profile dicts (id, username, display_name*).
+    """
+    me = _me_id()
+    if not me:
+        return []
+    url, headers = _sb_headers()
+    id_col, username_col, display_col = _detect_profile_columns()
+
+    params = {
+        "or": f"(requester_id.eq.{me},recipient_id.eq.{me})",
+        "status": "eq.accepted",
+        "select": "id,requester_id,recipient_id,status",
+        "limit": 1000,
+    }
+    r = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=params, timeout=20)
+    r.raise_for_status()
+    rels = r.json()
+
+    friend_ids = []
+    for fr in rels:
+        other = fr["recipient_id"] if fr["requester_id"] == me else fr["requester_id"]
+        if other not in friend_ids:
+            friend_ids.append(other)
+
+    friends = []
+    for uid in friend_ids:
+        pr = requests.get(
+            f"{url}/rest/v1/profiles",
+            headers=headers,
+            params={"select": f"{id_col},{username_col},{display_col}", id_col: f"eq.{uid}", "limit": 1},
+            timeout=20,
+        )
+        pr.raise_for_status()
+        arr = pr.json()
+        if arr:
+            friends.append(arr[0])
+    return friends
+# ==== end block ====
+
+
 
 
 
