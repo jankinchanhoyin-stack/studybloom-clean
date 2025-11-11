@@ -278,18 +278,43 @@ def interactive_quiz(questions: List[dict], item_id: Optional[str]=None, key_pre
             except Exception:
                 st.info("Attempt not saved (check quiz_attempts table).")
     if new_col.button("🎲 New quiz", key=f"{key_prefix}_regen") and item_id:
-        try:
-            quiz_item = get_item(item_id); folder_id = quiz_item.get("folder_id"); subject = subject_hint or "General"
-            if folder_id:
-                siblings = list_items(folder_id, limit=200); summary = next((s for s in siblings if s.get("kind")=="summary"), None)
-                if summary and summary.get("data"):
-                    new_qs = generate_quiz_from_notes(summary["data"], subject=subject, audience="high school", num_questions=8, mode="free")
-                    created = save_item("quiz", f"{summary['title']} • Quiz (new)", {"questions": new_qs}, folder_id)
-                    st.success("New quiz created."); _set_params(item=created.get("id"), view="all"); st.rerun()
-                else: st.info("No summary found in this folder to generate from.")
-            else:     st.info("Folder not found for this quiz.")
-        except Exception as e:
-            st.error(f"Re-generate failed: {e}")
+        with st.status("Generating a fresh quiz…", expanded=True) as status:
+            try:
+                status.update(label="Fetching current quiz + folder…")
+                quiz_item = get_item(item_id)
+                folder_id = quiz_item.get("folder_id")
+                subject = subject_hint or "General"
+
+                if not folder_id:
+                    status.update(state="error", label="Folder not found for this quiz.")
+                else:
+                    status.update(label="Finding summary in this topic…")
+                    siblings = list_items(folder_id, limit=200)
+                    summary = next((s for s in siblings if s.get("kind") == "summary"), None)
+                    if not (summary and summary.get("data")):
+                        status.update(state="error", label="No summary found in this folder to generate from.")
+                    else:
+                        status.update(label="Asking AI to build new questions…")
+                        new_qs = generate_quiz_from_notes(
+                            summary["data"],
+                            subject=subject,
+                            audience="high school",
+                            num_questions=8,
+                            mode="free",
+                        )
+                        status.update(label="Saving quiz…")
+                        created = save_item(
+                            "quiz",
+                            f"{summary['title']} • Quiz (new)",
+                            {"questions": new_qs},
+                            folder_id,
+                        )
+                        status.update(state="complete", label="New quiz created 🎉")
+                        _set_params(item=created.get("id"), view="all")
+                        st.rerun()
+            except Exception as e:
+                status.update(state="error", label=f"Re-generate failed: {e}")
+
 
 # ---------------- Sidebar: Auth ----------------
 st.sidebar.title("StudyBloom")
@@ -373,127 +398,137 @@ tabs = st.tabs(["Quick Study", "Resources", "All Resources"])
 # ===== Quick Study =====
 with tabs[0]:
     st.title("⚡ Quick Study")
+
     if "sb_user" not in st.session_state:
         st.info("Log in to save your study materials.")
     else:
-        subjects = _roots(ALL_FOLDERS); subj_names = [s["name"] for s in subjects]
+        ALL_FOLDERS = list_folders()
+        subjects = [r for r in ALL_FOLDERS if not r.get("parent_id")]
+        subj_names = [s["name"] for s in subjects]
 
-        # Subject
-        st.markdown("### Subject")
-        make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
+        # STEP 1: Subject (choose existing OR create new)
+        st.subheader("1) Subject")
+        s1a, s1b = st.columns([1.4, 1])
+        subj_mode = s1a.radio("How do you want to pick a subject?", ["Select existing", "Create new"], horizontal=True, key="qs_subj_mode")
+
         subject_id = None
-        if make_new_subject:
-            new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
-            if st.button("Save subject", key="qs_save_subject_btn"):
-                name = (new_subject or "").strip()
-                if not name: st.warning("Enter a subject name.")
-                elif name.lower() in {n.lower() for n in subj_names}:
-                    st.error("This subject already exists. Please use a different name.")
-                else:
-                    create_folder(name, None); st.success("Subject created."); st.rerun()
-        else:
-            subj_pick = st.selectbox("Use existing subject", ["— select —"]+subj_names, key="qs_subject_pick")
-            if subj_pick in subj_names:
-                subject_id = next(s["id"] for s in subjects if s["name"]==subj_pick)
+        subject_name_selected = None
 
-        # Exam
-        st.markdown("### Exam")
+        if subj_mode == "Select existing":
+            subject_name_selected = s1b.selectbox("Subject", ["— select —"] + subj_names, key="qs_subject_pick")
+            if subject_name_selected in subj_names:
+                subject_id = next(s["id"] for s in subjects if s["name"] == subject_name_selected)
+        else:
+            new_subject = s1b.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject_name")
+
+        # Only proceed when step 1 is satisfied
+        ready_subject = bool(subject_id) or bool((st.session_state.get("qs_new_subject_name") or "").strip())
+        if not ready_subject:
+            st.stop()
+
+        # Create subject if needed (just-in-time)
+        if not subject_id and (st.session_state.get("qs_new_subject_name") or "").strip():
+            name = st.session_state["qs_new_subject_name"].strip()
+            if name.lower() in {n.lower() for n in subj_names}:
+                st.error("This subject already exists. Choose it from 'Select existing'.")
+                st.stop()
+            created = create_folder(name, None)
+            subject_id = created["id"]
+            subject_name_selected = created["name"]
+            ALL_FOLDERS = list_folders()  # refresh
+
+        st.success(f"Subject: {subject_name_selected or next(s['name'] for s in ALL_FOLDERS if s['id']==subject_id)}")
+
+        # STEP 2: Exam (select existing OR create new)
+        st.subheader("2) Exam")
+        exams = [f for f in ALL_FOLDERS if f.get("parent_id") == subject_id]
+        ex_names = [e["name"] for e in exams]
+        e2a, e2b = st.columns([1.4, 1])
+        exam_mode = e2a.radio("How do you want to pick an exam?", ["Select existing", "Create new"], horizontal=True, key="qs_exam_mode")
+
         exam_id = None
-        if subject_id:
-            exams = [f for f in ALL_FOLDERS if f.get("parent_id")==subject_id]
-            exam_names = [e["name"] for e in exams]
-            make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
-            if make_new_exam:
-                new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
-                if st.button("Save exam", key="qs_save_exam_btn"):
-                    name = (new_exam or "").strip()
-                    if not name: st.warning("Enter an exam name.")
-                    elif name.lower() in {n.lower() for n in exam_names}:
-                        st.error("This exam already exists under that subject.")
-                    else:
-                        create_folder(name, subject_id); st.success("Exam created."); st.rerun()
-            else:
-                ex_pick = st.selectbox("Use existing exam", ["— select —"]+exam_names, key="qs_exam_pick")
-                if ex_pick in exam_names:
-                    exam_id = next(e["id"] for e in exams if e["name"]==ex_pick)
-        else:
-            st.caption("Pick or create a Subject first to reveal Exams.")
+        exam_name_selected = None
 
-        # Topic: Always new (no save yet)
-        st.markdown("### Topic")
-        topic_name_input = ""
-        if exam_id:
-            topic_name_input = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
+        if exam_mode == "Select existing":
+            exam_name_selected = e2b.selectbox("Exam", ["— select —"] + ex_names, key="qs_exam_pick")
+            if exam_name_selected in ex_names:
+                exam_id = next(e["id"] for e in exams if e["name"] == exam_name_selected)
         else:
-            st.caption("Pick or create an Exam first to add a Topic.")
+            new_exam = e2b.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam_name")
 
-        st.markdown("---")
-        st.markdown("**Subject (free text, improves accuracy & quality):**")
+        ready_exam = bool(exam_id) or bool((st.session_state.get("qs_new_exam_name") or "").strip())
+        if not ready_exam:
+            st.stop()
+
+        # Create exam if needed (just-in-time)
+        if not exam_id and (st.session_state.get("qs_new_exam_name") or "").strip():
+            name = st.session_state["qs_new_exam_name"].strip()
+            if name.lower() in {n.lower() for n in ex_names}:
+                st.error("This exam already exists under the selected subject.")
+                st.stop()
+            created = create_folder(name, subject_id)
+            exam_id = created["id"]
+            exam_name_selected = created["name"]
+            ALL_FOLDERS = list_folders()  # refresh
+
+        st.success(f"Exam: {exam_name_selected or next(e['name'] for e in ALL_FOLDERS if e['id']==exam_id)}")
+
+        # STEP 3: Topic (always new, saved on generate)
+        st.subheader("3) Topic")
+        topic_text = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
+        if not (topic_text or "").strip():
+            st.stop()
+
+        # STEP 4: Subject hint (improves quality)
+        st.subheader("4) Subject context (improves quality)")
         subject_hint = st.text_input(
             "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
             value="General",
             key="qs_subject_hint"
         )
+        if not (subject_hint or "").strip():
+            st.stop()
 
-        audience_label = st.selectbox("Audience", ["University","A-Level","IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
-        aud_map = {"University":"university","A-Level":"A-Level","IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
+        # STEP 5: Audience + detail
+        st.subheader("5) Audience & detail")
+        audience_label = st.selectbox("Audience", ["University","A-Level","A-Level / IB","GCSE","HKDSE","Primary"], index=0, key="qs_audience_label")
+        aud_map = {"University":"university","A-Level":"A-Level","A-Level / IB":"A-Level","GCSE":"high school","HKDSE":"high school","Primary":"primary"}
         audience = aud_map.get(audience_label,"high school")
         detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
 
-        st.markdown("### Quiz type")
+        # STEP 6: Quiz type
+        st.subheader("6) Quiz type")
         quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode")
         mcq_options = 4
         if quiz_mode == "Multiple choice":
             mcq_options = st.slider("MCQ options per question", 3, 6, 4, key="qs_mcq_opts")
 
+        # STEP 7: Upload
+        st.subheader("7) Upload files")
         files = st.file_uploader("Upload files (PDF, PPTX, JPG, PNG, TXT)",
-                                 type=["pdf","pptx","jpg","jpeg","png","txt"], accept_multiple_files=True, key="qs_files")
+                                 type=["pdf","pptx","jpg","jpeg","png","txt"],
+                                 accept_multiple_files=True, key="qs_files")
+        if not files:
+            st.stop()
 
-        # Gate the generate button until all required inputs exist
-        has_subject = bool(subject_id or st.session_state.get("qs_new_subject"))
-        has_exam = bool(exam_id or st.session_state.get("qs_new_exam"))
-        has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
-        has_files = bool(files)
-        has_audience = bool(audience)
-
-        can_generate = (subject_id is not None) and (exam_id is not None) and has_topic_text and has_files and has_audience
-
-        gen_clicked = st.button(
-            "Generate Notes + Flashcards + Quiz",
-            type="primary",
-            key="qs_generate_btn",
-            disabled=not can_generate
-        )
+        # Validate & Generate
+        can_generate = True  # all prior steps gated via st.stop()
+        gen_clicked = st.button("Generate Notes + Flashcards + Quiz", type="primary", key="qs_generate_btn")
 
         if gen_clicked and can_generate:
-            # Resolve destination folders freshly
-            subjects = _roots(ALL_FOLDERS); subj_map = {s["name"]: s["id"] for s in subjects}
-            subject_id = subj_map.get(st.session_state.get("qs_subject_pick"), subject_id)
-            exams = [f for f in list_folders() if subject_id and f.get("parent_id")==subject_id]
-            exam_map = {e["name"]: e["id"] for e in exams}
-            exam_id = exam_map.get(st.session_state.get("qs_exam_pick"), exam_id)
+            # Create Topic now (clash check) and proceed
+            ALL_FOLDERS = list_folders()
+            existing_topics = [f for f in ALL_FOLDERS if f.get("parent_id") == exam_id]
+            if topic_text.strip().lower() in {t["name"].lower() for t in existing_topics}:
+                st.error("Topic already exists under this exam. Please choose a different name.")
+                st.stop()
 
-            # Create the topic now (and catch clashes)
-            topic_id = None
-            topic_name = (st.session_state.get("qs_new_topic") or "").strip()
-            if exam_id and topic_name:
-                existing_topics = [f for f in list_folders() if f.get("parent_id")==exam_id]
-                if topic_name.lower() in {t["name"].lower() for t in existing_topics}:
-                    st.error("Topic already exists under this exam. Please choose a different name.")
-                    st.stop()
-                created = create_folder(topic_name, exam_id)
-                topic_id = created["id"]
-                topic_name = created["name"]
+            created = create_folder(topic_text.strip(), exam_id)
+            topic_id = created["id"]
+            topic_name = created["name"]
 
-            dest_folder = topic_id or exam_id or subject_id or None
-
-            # Base title (Topic > Exam > Subject > subject_hint)
-            base_title = (
-                topic_name
-                or (next((e["name"] for e in exams if e["id"]==exam_id), None) if exam_id else None)
-                or (next((s["name"] for s in subjects if s["id"]==subject_id), None) if subject_id else None)
-                or (subject_hint or "Study Pack")
-            )
+            # Base title
+            base_title = topic_name or (exam_name_selected or "Study Pack")
 
             prog = st.progress(0, text="Starting…")
             try:
@@ -507,10 +542,10 @@ with tabs[0]:
                 data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
 
                 prog.progress(60, text="Generating flashcards & quiz…")
-                cards = []
                 try:
                     cards = generate_flashcards_from_notes(data, audience=audience)
                 except Exception as e:
+                    cards = []
                     st.warning(f"Flashcards skipped: {e}")
 
                 qs = generate_quiz_from_notes(
@@ -524,18 +559,18 @@ with tabs[0]:
                 title_flash = f"🧠 {base_title} — Flashcards"
                 title_quiz  = f"🧪 {base_title} — Quiz"
 
-                summary = save_item("summary", title_notes, data, dest_folder)
+                summary = save_item("summary", title_notes, data, topic_id)
                 summary_id = summary.get("id")
                 flash_id = quiz_id = None
 
                 if cards:
-                    flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
+                    flash = save_item("flashcards", title_flash, {"flashcards": cards}, topic_id)
                     flash_id = flash.get("id")
 
                 quiz_payload = {"questions": qs}
                 if quiz_mode == "Multiple choice":
                     quiz_payload["type"] = "mcq"
-                quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
+                quiz_item = save_item("quiz", title_quiz, quiz_payload, topic_id)
                 quiz_id = quiz_item.get("id")
 
                 prog.progress(100, text="Done!")
