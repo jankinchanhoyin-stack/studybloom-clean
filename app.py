@@ -1,5 +1,5 @@
 import streamlit as st
-st.set_page_config(page_title="StudyBloom", page_icon="📚")
+st.set_page_config(page_title="StudyBloom", page_icon="📚", initial_sidebar_state="expanded")
 
 
 # ---- CSS: compact action buttons, avoid wrapping ----
