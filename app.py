@@ -981,56 +981,79 @@ if is_account:
     # =======
     # XP Area
     # =======
-    st.subheader("✨Your XP")
-
-    # Fetch XP (requires compute_xp() helper defined previously)
-    fc_today, qz_today   = compute_xp("today")   # returns (flashcards_known_today, quiz_correct_today)
-    fc_month, qz_month   = compute_xp("month")   # returns (flashcards_known_month, quiz_correct_month)
-
+    
+    st.subheader("✨ Your XP")
+    
+    # XP counts
+    fc_today, qz_today   = compute_xp("today")
+    fc_month, qz_month   = compute_xp("month")
     xp_today  = fc_today + qz_today
     xp_month  = fc_month + qz_month
-
+    
     # Targets
     DAILY_XP_GOAL   = 60
     MONTHLY_XP_GOAL = 3000
-
-    # Checkpoints (month)
+    
+    # Checkpoints with emojis
     CHECKPOINTS = [
-        (1000, "Rising Scholar"),
-        (2000, "Seasoned Scholar"),
-        (3000, "Master Scholar"),
+        (1000, "📘 Rising Scholar"),
+        (2000, "🎓 Seasoned Scholar"),
+        (3000, "🏆 Master Scholar"),
     ]
-
-    # Ratios for progress bars (cap visuals at 100%, keep counting in text)
+    
+    # Ratios (bars cap at 100%)
     daily_ratio   = min(1.0, xp_today / max(1, DAILY_XP_GOAL))
     monthly_ratio = min(1.0, xp_month / max(1, MONTHLY_XP_GOAL))
-
+    
+    # --- CSS tweaks ---
+    st.markdown("""
+    <style>
+    /* Remove white bar background and give nice rounded progress bar */
+    .stProgress > div {
+        background-color: rgba(255,255,255,0.05) !important;
+        border-radius: 10px !important;
+    }
+    .stProgress > div > div {
+        background-color: #2563eb !important;  /* Tailwind blue-600 */
+        border-radius: 10px !important;
+    }
+    /* XP container styling */
+    .xp-box {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: .8rem .9rem;
+        background: rgba(255,255,255,0.03);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # --- Layout ---
     with st.container():
-        # Row 1: Daily XP
         c1, c2 = st.columns([3, 2])
         with c1:
             st.markdown("<div class='xp-box'>", unsafe_allow_html=True)
-            label = f"**Today's XP**: {xp_today} / {DAILY_XP_GOAL}"
+            label = f"**Today's XP:** {xp_today} / {DAILY_XP_GOAL}"
             if xp_today > DAILY_XP_GOAL:
                 label += f"  •  🎉 exceeded by {xp_today - DAILY_XP_GOAL}"
             st.write(label)
             st.progress(daily_ratio)
-            st.caption("Daily XP = Flashcards you marked **Knew it** + Quiz questions answered correctly (from saved attempts) today.")
+            st.caption("Daily XP = Flashcards you marked **Knew it** + Quiz questions answered correctly today.")
             st.markdown("</div>", unsafe_allow_html=True)
         with c2:
             st.metric("Flashcards ✅ today", fc_today)
             st.metric("Quiz correct today", qz_today)
-
-        # Row 2: Monthly XP + checkpoints
+    
+        st.markdown("")
+    
         c3, c4 = st.columns([3, 2])
         with c3:
             st.markdown("<div class='xp-box'>", unsafe_allow_html=True)
-            label = f"**This Month's XP**: {xp_month} / {MONTHLY_XP_GOAL}"
+            label = f"**This Month's XP:** {xp_month} / {MONTHLY_XP_GOAL}"
             if xp_month > MONTHLY_XP_GOAL:
                 label += f"  •  🎉 exceeded by {xp_month - MONTHLY_XP_GOAL}"
             st.write(label)
             st.progress(monthly_ratio)
-
+    
             reached = [(cp, name) for cp, name in CHECKPOINTS if xp_month >= cp]
             if reached:
                 last_cp, last_name = reached[-1]
@@ -1040,13 +1063,13 @@ if is_account:
                 cp_val, cp_name = next_cp
                 st.caption(f"Next checkpoint: **{cp_name}** at {cp_val} XP — {max(0, cp_val - xp_month)} to go.")
             else:
-                st.caption("All monthly checkpoints achieved — amazing!")
+                st.caption("All monthly checkpoints achieved — incredible progress! 🥳")
             st.markdown("</div>", unsafe_allow_html=True)
         with c4:
             st.metric("Flashcards ✅ this month", fc_month)
             st.metric("Quiz correct this month", qz_month)
-
-    st.divider()
+    
+        st.divider()
 
     # =========
     # Sign out
