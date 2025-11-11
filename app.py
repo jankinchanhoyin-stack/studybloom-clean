@@ -1059,80 +1059,92 @@ elif view_param == "all":
 # ===========================
 
 # ----------------- Rectangular sidebar buttons (icon left, text right) -----------------
+# ----------------- Slim, uniform rectangular sidebar -----------------
 st.markdown("""
 <style>
-/* keep sidebar expanded and hide collapse chevron */
 [data-testid="collapsedControl"] { display: none !important; }
 
-/* neater inner padding */
+/* make sidebar narrower overall */
+section[data-testid="stSidebar"] {
+  width: 170px !important;           /* adjust sidebar width */
+  min-width: 170px !important;
+}
+
+/* inner padding */
 section[data-testid="stSidebar"] .block-container {
-  padding: 12px 10px 16px 10px;
+  padding: 12px 10px 12px 10px;
 }
 
-/* vertical stack */
+/* vertical stack of rows */
 .nav-stack {
-  display: flex; flex-direction: column; gap: 8px; width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  align-items: stretch;
 }
 
-/* one row wrapper so we can target active state per-row */
+/* each nav row same rectangular button size */
 .nav-row { width: 100%; }
 .nav-row .stButton > button {
   width: 100% !important;
+  height: 44px !important;
   display: flex !important;
   align-items: center !important;
   justify-content: flex-start !important;
   gap: 10px !important;
-  padding: 10px 12px !important;
-  height: 44px !important;
-  border-radius: 12px !important;
-  font-size: 16px !important;   /* label size */
+  padding: 6px 10px !important;
+  border-radius: 10px !important;
+  font-size: 15px !important;
   line-height: 1 !important;
+  font-weight: 500 !important;
 }
 
-/* make the emoji a bit larger to feel like an icon */
+/* icon text styling */
 .nav-row .stButton > button span {
   font-size: 18px !important;
 }
 
-/* active highlight */
+/* active & hover states */
 .nav-row.active .stButton > button {
   border: 2px solid #f87171 !important;
-  background-color: rgba(248,113,113,0.10) !important;
+  background-color: rgba(248,113,113,0.12) !important;
 }
-
-/* hover hint (subtle) */
 .nav-row .stButton > button:hover {
-  background-color: rgba(255,255,255,0.06) !important;
+  background-color: rgba(255,255,255,0.07) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
+
 def _nav_row(icon: str, label: str, target_view: str|None, key: str, active: bool=False):
-    # Wrap each button so CSS can highlight the active row only
-    st.markdown(f"<div class='nav-row{' active' if active else ''}'>", unsafe_allow_html=True)
-    # Use a normal Streamlit button; label contains emoji + text so it renders icon-left, text-right
+    cls = "nav-row active" if active else "nav-row"
+    st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
     if st.button(f"{icon}  {label}", key=key):
         _set_params(view=target_view); st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-# current view from URL
+
+# current view
 _v = _get_params().get("view")
 view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
-# render the sidebar (always visible on all pages)
+# sidebar (always visible)
 with st.sidebar:
     st.markdown("<div class='nav-stack'>", unsafe_allow_html=True)
-    _nav_row("🏠", "Home", None,         key="nav_home", active=(view_param == ""))
-    _nav_row("🧭", "Resources", "resources", key="nav_res",  active=(view_param == "resources"))
-    _nav_row("🗂️", "All",   "all",       key="nav_all",  active=(view_param == "all"))
+    _nav_row("🏠", "Home", None, key="nav_home", active=(view_param==""))
+    _nav_row("🧭", "Resources", "resources", key="nav_res", active=(view_param=="resources"))
+    _nav_row("🗂️", "All", "all", key="nav_all", active=(view_param=="all"))
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ------------ Router (unchanged) ------------
 if view_param == "resources":
     render_resources_page(); st.stop()
 elif view_param == "all":
     render_all_resources_page(); st.stop()
-# else fall through to Quick Study page...
+# else: default Quick Study view continues
+
 
 
 
