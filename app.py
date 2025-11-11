@@ -699,7 +699,6 @@ if is_account:
                     st.error(f"Password change failed: {e}")
 
     st.divider()
-    st.markdown("### Account actions")
 
     # Right-aligned Sign out button
     _, sign_col = st.columns([6, 1])
