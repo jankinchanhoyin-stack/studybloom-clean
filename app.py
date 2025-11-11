@@ -1060,7 +1060,6 @@ elif view_param == "all":
 
 # --- CSS: lock a skinny sidebar, hide the default hamburger, and style icon buttons
 # Make sure sidebar stays open and set up page meta
-st.set_page_config(page_title="StudyBloom", page_icon="📚", initial_sidebar_state="expanded")
 
 # --- Sidebar Styling ---
 st.markdown("""
