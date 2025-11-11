@@ -95,7 +95,16 @@ def change_password(new_password: str) -> dict:
     r.raise_for_status()
     return r.json()
 def sign_out():
+    # Revoke token server-side (best effort), then drop local session.
+    try:
+        url, _ = _get_keys()
+        tok = (st.session_state.get("sb_user") or {}).get("access_token")
+        if tok:
+            requests.post(f"{url}/auth/v1/logout", headers=_headers(tok), timeout=10)
+    except Exception:
+        pass
     st.session_state.pop("sb_user", None)
+
 
 # ---------- Folders & items ----------
 def create_folder(name: str, parent_id: Optional[str]):
