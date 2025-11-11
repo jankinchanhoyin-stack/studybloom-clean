@@ -41,16 +41,6 @@ def sign_in(email: str, password: str):
     st.session_state["sb_user"] = {"access_token": data["access_token"], "user": data["user"]}
     return data
 
-def sign_up(email: str, password: str):
-    url, _ = _get_keys()
-    r = requests.post(
-        f"{url}/auth/v1/signup",
-        json={"email": email, "password": password},
-        headers=_headers(), timeout=20
-    )
-    r.raise_for_status()
-    return r.json()
-
 def sign_out():
     st.session_state.pop("sb_user", None)
 
