@@ -685,15 +685,29 @@ with tabs[0]:
 
         # ------- step UI helpers -------
         def _nav(prev_ok=True, next_ok=True, show_back=True, show_next=True, next_label="Next"):
+            step = st.session_state["qs_step"]
             c1, c2 = st.columns([1,1])
+        
+            # Back
             if show_back:
-                if c1.button("← Back", use_container_width=True):
-                    st.session_state["qs_step"] = max(0, st.session_state["qs_step"] - 1)
+                if c1.button("← Back", use_container_width=True, key=f"qs_back_{step}"):
+                    st.session_state["qs_step"] = max(0, step - 1)
                     st.rerun()
             else:
-                c1.write("")  # spacer
+                c1.write("")
+        
+            # Next
             if show_next:
-                c2.button(next_label, type="primary", use_container_width=True, disabled=not next_ok, on_click=lambda: st.session_state.update(qs_step=st.session_state["qs_step"]+1) or st.rerun())
+                next_disabled = not next_ok
+                if c2.button(
+                    next_label,
+                    type="primary",
+                    use_container_width=True,
+                    disabled=next_disabled,
+                    key=f"qs_next_{step}",
+                ):
+                    st.session_state["qs_step"] = step + 1
+                    st.rerun()
 
         # ---------- STEP 0: Subject ----------
         if st.session_state["qs_step"] == 0:
