@@ -1323,13 +1323,11 @@ def render_community_page():
         _set_params(view=None)
         st.rerun()
 
-    st.markdown("## 👥 Community")
-
     # Optional: guard if not signed in
     if "sb_user" not in st.session_state:
         st.info("Please sign in to use Community features.")
         return
-    st.markdown("## 👥 Community")
+    st.markdown("## 🌐 Community")
 
     if "sb_user" not in st.session_state:
         st.info("Sign in to use community features.")
