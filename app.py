@@ -1265,29 +1265,82 @@ _view_param = _get_params().get("view")
 view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
 
 def render_community_page():
-    bcol, _ = st.columns([1, 9])
-    if bcol.button("← Home", key="comm_back_home"):
-        _set_params(view=None)
-        st.rerun()
-
     st.markdown("## 👥 Community")
 
     if "sb_user" not in st.session_state:
-        st.info("Please sign in to access Community.")
+        st.info("Sign in to use community features.")
         return
 
-    with st.expander("Add a friend", expanded=True):
-        c1, c2 = st.columns([4, 1])
-        friend_username = c1.text_input("Friend’s username", placeholder="e.g., alex_m")
-        if c2.button("Add", key="friend_add_btn"):
-            ok, msg = sb_add_friend(friend_username)
-            (st.success if ok else st.warning)(msg)
-            st.rerun()
+    # --- Add friend by username ---
+    st.markdown("### Add a friend")
+    add_c1, add_c2 = st.columns([4, 1.3])
+    with add_c1:
+        new_friend_username = st.text_input("Friend’s username", key="comm_add_username", placeholder="e.g., alex_123")
+    with add_c2:
+        if st.button("Send request", key="comm_send_req"):
+            from auth_rest import sb_send_friend_request
+            msg = sb_send_friend_request((new_friend_username or "").strip())
+            if msg.lower().startswith(("error", "no user", "please sign in", "you can’t", "you can't")):
+                st.error(msg)
+            else:
+                st.success(msg)
+                st.rerun()
 
-    st.markdown("---")
+    st.divider()
 
-    me_id = _current_user_id()
-    me_name = (st.session_state["sb_user"]["user"].get("user_metadata") or {}).get("username") or "You"
+    # --- Requests tabs ---
+    st.markdown("### Requests")
+    t1, t2 = st.tabs(["Incoming", "Outgoing"])
+
+    from auth_rest import (
+        sb_list_friend_requests, sb_respond_friend_request, sb_cancel_outgoing_request,
+        sb_list_friends_with_profiles, sb_get_xp_totals_for_user
+    )
+
+    with t1:
+        incoming = sb_list_friend_requests("incoming")
+        if not incoming:
+            st.caption("No incoming requests.")
+        else:
+            for r in incoming:
+                u = r["requester"]
+                line = f"**@{u.get('username','')}** ({u.get('display_name','')})  — _{r['status']}_"
+                cA, cB, cC = st.columns([6, 1, 1])
+                cA.markdown(line)
+                if r["status"] == "pending":
+                    if cB.button("Accept", key=f"req_acc_{r['id']}"):
+                        msg = sb_respond_friend_request(r["id"], "accept")
+                        (st.success if msg.startswith("Request accepted") else st.error)(msg)
+                        st.rerun()
+                    if cC.button("Decline", key=f"req_dec_{r['id']}"):
+                        msg = sb_respond_friend_request(r["id"], "decline")
+                        (st.success if msg.startswith("Request declined") else st.error)(msg)
+                        st.rerun()
+
+    with t2:
+        outgoing = sb_list_friend_requests("outgoing")
+        if not outgoing:
+            st.caption("No outgoing requests.")
+        else:
+            for r in outgoing:
+                u = r["recipient"]
+                line = f"To **@{u.get('username','')}** ({u.get('display_name','')})  — _{r['status']}_"
+                cA, cB = st.columns([6, 1])
+                cA.markdown(line)
+                if r["status"] == "pending":
+                    if cB.button("Cancel", key=f"req_cancel_{r['id']}"):
+                        msg = sb_cancel_outgoing_request(r["id"])
+                        (st.success if msg.startswith("Request cancelled") else st.error)(msg)
+                        st.rerun()
+
+    st.divider()
+
+    # --- Friends leaderboard (today/month) ---
+    st.markdown("### Friends’ XP")
+
+    me = (st.session_state.get("sb_user") or {}).get("user") or {}
+    me_id = me.get("id")
+    me_name = (me.get("user_metadata") or {}).get("display_name") or (me.get("email") or "me")
 
     rows = []
     my_xp = sb_get_xp_totals_for_user(me_id)
@@ -1295,14 +1348,17 @@ def render_community_page():
 
     for f in sb_list_friends_with_profiles():
         xp = sb_get_xp_totals_for_user(f["id"])
-        rows.append({"User": f"👤 {f['username']}", "Today XP": xp["today"], "Month XP": xp["month"]})
+        uname = f.get("username") or "friend"
+        dname = f.get("display_name") or uname
+        rows.append({"User": f"👤 {dname} (@{uname})", "Today XP": xp["today"], "Month XP": xp["month"]})
 
-    st.markdown("### 🏆 Leaderboard")
-    if not rows:
-        st.caption("No friends yet — add someone above!")
+    # Simple table
+    import pandas as pd
+    if rows:
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        rows.sort(key=lambda r: (r["Today XP"], r["Month XP"]), reverse=True)
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.caption("No friends to show yet — send a request above!")
 
 
 def render_resources_page():
