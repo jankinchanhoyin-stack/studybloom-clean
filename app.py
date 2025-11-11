@@ -499,7 +499,10 @@ if st_dialog:
         c1, c2 = st.columns([1,1])
         if c1.button("Sign in", type="primary", key="dlg_login_btn"):
             try:
-                sign_in(email, pwd)
+                try:
+                    sess = sign_in(email, pwd)  # will raise with detailed message on failure
+                except Exception as e:
+                    st.error(str(e))
                 if remember and cookies and "sb_user" in st.session_state:
                     tok = st.session_state["sb_user"].get("access_token") or st.session_state["sb_user"].get("session",{}).get("access_token")
                     if tok:
