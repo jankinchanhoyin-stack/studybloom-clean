@@ -643,8 +643,9 @@ if "item" in params and "sb_user" in st.session_state:
         st.title(title)
 
         # Back -> All Resources
-        if st.button("← Back to All Resources", key="item_back_btn"):
-            _set_params(view="all"); st.rerun()
+        if st.button("← Back to Resources", key="item_back_btn"):
+            _set_params(view="resources")
+            st.rerun()
 
         data = full.get("data") or {}
 
@@ -658,8 +659,9 @@ if "item" in params and "sb_user" in st.session_state:
             st.write(data or full)
     except Exception as e:
         st.error(f"Could not load item: {e}")
-        if st.button("← Back to All Resources", key="item_back_btn2"):
-            _set_params(view="all"); st.rerun()
+        if st.button("← Back to Resources", key="item_back_btn"):
+            _set_params(view="resources")
+            st.rerun()
     st.stop()
 
 # ---------------- Tabs ----------------
