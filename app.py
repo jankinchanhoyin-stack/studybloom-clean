@@ -23,7 +23,9 @@ from auth_rest import (
     create_folder, list_folders, delete_folder, list_child_folders,
     save_quiz_attempt, list_quiz_attempts, list_quiz_attempts_for_items,
     save_flash_review, list_flash_reviews_for_items,
-    current_user, update_profile, change_password
+    current_user, update_profile, change_password, _current_user_id, _iso_start_of_today_utc,
+    _iso_start_of_tomorrow_utc, _iso_start_of_month_utc, _iso_start_of_next_month_utc, sb_find_profile_by_username,
+    sb_add_friend, sb_list_friends_with_profiles, sb_sum_xp_for_window, sb_get_xp_totals_for_user
 )
 
 # ---- Cookies (define BEFORE any dialog uses it) ----
@@ -1170,6 +1172,47 @@ if "item" in params and "sb_user" in st.session_state:
 _view_param = _get_params().get("view")
 view_param = (_view_param[0] if isinstance(_view_param, list) else _view_param) or ""
 
+def render_community_page():
+    bcol, _ = st.columns([1, 9])
+    if bcol.button("← Home", key="comm_back_home"):
+        _set_params(view=None)
+        st.rerun()
+
+    st.markdown("## 👥 Community")
+
+    if "sb_user" not in st.session_state:
+        st.info("Please sign in to access Community.")
+        return
+
+    with st.expander("Add a friend", expanded=True):
+        c1, c2 = st.columns([4, 1])
+        friend_username = c1.text_input("Friend’s username", placeholder="e.g., alex_m")
+        if c2.button("Add", key="friend_add_btn"):
+            ok, msg = sb_add_friend(friend_username)
+            (st.success if ok else st.warning)(msg)
+            st.rerun()
+
+    st.markdown("---")
+
+    me_id = _current_user_id()
+    me_name = (st.session_state["sb_user"]["user"].get("user_metadata") or {}).get("username") or "You"
+
+    rows = []
+    my_xp = sb_get_xp_totals_for_user(me_id)
+    rows.append({"User": f"🧠 {me_name} (you)", "Today XP": my_xp["today"], "Month XP": my_xp["month"]})
+
+    for f in sb_list_friends_with_profiles():
+        xp = sb_get_xp_totals_for_user(f["id"])
+        rows.append({"User": f"👤 {f['username']}", "Today XP": xp["today"], "Month XP": xp["month"]})
+
+    st.markdown("### 🏆 Leaderboard")
+    if not rows:
+        st.caption("No friends yet — add someone above!")
+    else:
+        rows.sort(key=lambda r: (r["Today XP"], r["Month XP"]), reverse=True)
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def render_resources_page():
     # ← Home (top-left)
     bcol, _ = st.columns([1, 9])
@@ -1561,6 +1604,9 @@ if view_param == "resources":
     render_resources_page(); st.stop()
 elif view_param == "all":
     render_all_resources_page(); st.stop()
+elif view_param == "community":
+    render_community_page()
+    st.stop()
 
 # ===========================
 # Thin Icon Sidebar + Router
@@ -1640,7 +1686,9 @@ with st.sidebar:
     for label, icon, page in [
         ("Quick Study", "⚡", "home"),
         ("Resources", "🧭", "resources"),
-        ("All", "📁", "all"),("My Profile","👤","account")
+        ("All", "📁", "all"),
+        ("Community", "🌐", "community"),
+        ("My Profile","👤","account")
     ]:
         st.markdown("<div class='nav-btn'>", unsafe_allow_html=True)
         if st.button(f"{icon}  {label}", key=f"nav_{page}"):
