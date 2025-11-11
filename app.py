@@ -1,5 +1,143 @@
 import streamlit as st
 st.set_page_config(page_title="StudyBloom", page_icon="📚", initial_sidebar_state="expanded")
+# === Global theme & layout ===
+st.markdown("""
+<style>
+/* ---------- Font (Rubik) ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap');
+html, body, [class*="css"] { font-family: 'Rubik', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Noto Sans', Arial, sans-serif; }
+
+/* ---------- Color tokens ---------- */
+:root{
+  --sb-bg: #0f1216;            /* app bg */
+  --sb-surface: #161a20;       /* cards/inputs */
+  --sb-surface-2: #1b2027;     /* hover/active */
+  --sb-border: rgba(255,255,255,0.08);
+  --sb-text: #e9eef4;
+  --sb-text-dim: #b8c2cc;
+
+  --sb-accent: #5dd2c1;        /* primary / CTA */
+  --sb-accent-2: #7aa2ff;      /* secondary */
+  --sb-success: #4ade80;
+  --sb-warning: #fbbf24;
+  --sb-danger:  #f87171;
+}
+
+/* ---------- Reduce empty space, push content to edges ---------- */
+.block-container{
+  padding: 0.75rem 1.25rem 2rem 1.25rem !important;   /* tighter */
+  max-width: 1600px !important;                       /* allow wide */
+}
+
+/* Page background & subtle gradient */
+body{ background: radial-gradient(1200px 600px at 20% -10%, rgba(93,210,193,0.06), transparent 40%),
+                 radial-gradient(1000px 500px at 110% 0%, rgba(122,162,255,0.06), transparent 45%),
+                 var(--sb-bg); }
+
+/* ---------- Headings ---------- */
+h1, h2, h3, h4{ letter-spacing: .2px; }
+h1{ font-weight: 700; font-size: 2.15rem; margin: .6rem 0 .75rem; }
+h2{ font-weight: 700; font-size: 1.6rem;  margin: .5rem 0 .6rem;  }
+h3{ font-weight: 600; font-size: 1.25rem; margin: .5rem 0 .5rem;  }
+
+/* Horizontal rule look */
+hr, .stDivider{ border-color: var(--sb-border) !important; opacity:.8; }
+
+/* ---------- Inputs & selects ---------- */
+.stTextInput>div>div>input,
+.stTextArea textarea,
+.stSelectbox>div>div>div,
+[data-baseweb="input"] input{
+  background: var(--sb-surface) !important;
+  color: var(--sb-text) !important;
+  border: 1px solid var(--sb-border) !important;
+  border-radius: 10px !important;
+}
+.stSelectbox [data-baseweb="select"]>div{ background: var(--sb-surface) !important; }
+.stSlider>div{ padding-top: .25rem !important; }
+
+/* File uploader */
+[data-testid="stFileUploadDropzone"]{
+  background: var(--sb-surface) !important;
+  border: 1px dashed var(--sb-border) !important;
+  border-radius: 12px !important;
+}
+
+/* ---------- Buttons (global) ---------- */
+.stButton>button{
+  background: var(--sb-surface) !important;
+  color: var(--sb-text) !important;
+  border: 1px solid var(--sb-border) !important;
+  border-radius: 12px !important;
+  padding: .5rem .8rem !important;
+  font-weight: 500 !important;
+}
+.stButton>button[kind="primary"]{
+  background: var(--sb-accent) !important;
+  color: #0a0f12 !important;
+  border: 1px solid transparent !important;
+}
+.stButton>button:hover{
+  background: var(--sb-surface-2) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+.stButton>button[kind="primary"]:hover{ filter: brightness(.95); }
+
+/* Success / warning / danger helpers (optional utility classes) */
+.btn-success>button{ background: var(--sb-success) !important; color:#06100a !important; }
+.btn-warning>button{ background: var(--sb-warning) !important; color:#110b01 !important; }
+.btn-danger>button { background: var(--sb-danger)  !important; color:#130606 !important; }
+
+/* ---------- Cards/expanders ---------- */
+.stExpander, .stAlert, .stDataFrame{
+  border-radius: 12px !important; overflow: hidden !important;
+  border: 1px solid var(--sb-border) !important;
+  background: var(--sb-surface) !important;
+}
+
+/* ---------- Sidebar: compact, icon rows use ::before SVGs (see block 2) ---------- */
+[data-testid="collapsedControl"]{ display:none !important; }  /* keep visible */
+section[data-testid="stSidebar"]{ min-width: 170px !important; width: 170px !important; }
+section[data-testid="stSidebar"] .block-container{ padding: 12px 10px 12px; }
+
+/* Sidebar rows look */
+.nav-list{ display:flex; flex-direction:column; gap:8px; }
+.nav-row .stButton>button{
+  width:100% !important; height:44px !important;
+  display:flex !important; align-items:center !important; justify-content:flex-start !important;
+  gap:10px !important; padding:6px 10px !important; border-radius:10px !important; font-size:15px !important;
+}
+.nav-row.active .stButton>button{ border:2px solid var(--sb-accent) !important; background: rgba(93,210,193,.12) !important; }
+.nav-row .stButton>button:hover{ background: rgba(255,255,255,.07) !important; }
+
+/* Add real icons via ::before masks (no emojis required) */
+.nav-row .stButton>button::before{
+  content:""; display:inline-block; width:18px; height:18px; margin-right:2px;
+  background: currentColor; mask-size: cover; -webkit-mask-size: cover; mask-repeat:no-repeat; -webkit-mask-repeat:no-repeat;
+}
+.nav-row[data-which="home"] .stButton>button::before{
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M4.5 10.5V21h6v-6h3v6h6v-10.5"/></svg>');
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'M3 10.5 12 3l9 7.5\'/><path d=\'M4.5 10.5V21h6v-6h3v6h6v-10.5\'/></svg>");
+}
+.nav-row[data-which="resources"] .stButton>button::before{
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>');
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><circle cx=\'12\' cy=\'12\' r=\'10\'/><path d=\'M12 6v6l4 2\'/></svg>");
+}
+.nav-row[data-which="all"] .stButton>button::before{
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18"/><path d="M3 12h18"/><path d="M3 17h18"/></svg>');
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'M3 7h18\'/><path d=\'M3 12h18\'/><path d=\'M3 17h18\'/></svg>");
+}
+
+/* ---------- Metrics, progress, code blocks ---------- */
+[data-testid="stMetricValue"]{ font-weight:700; color:var(--sb-accent); }
+.stProgress > div > div{
+  background: var(--sb-surface) !important; border:1px solid var(--sb-border) !important; border-radius:10px !important;
+}
+.stProgress > div > div > div{ background: var(--sb-accent) !important; }
+code, pre{ background: #0b0f14 !important; border-radius: 8px !important; }
+</style>
+""", unsafe_allow_html=True)
+
 
 
 # ---- CSS: compact action buttons, avoid wrapping ----
@@ -1116,33 +1254,31 @@ section[data-testid="stSidebar"] .block-container {
 """, unsafe_allow_html=True)
 
 
-def _nav_row(icon: str, label: str, target_view: str|None, key: str, active: bool=False):
-    cls = "nav-row active" if active else "nav-row"
-    st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
-    if st.button(f"{icon}  {label}", key=key):
+# ---- Sidebar FIRST, then router ----
+def _nav(label: str, target_view: str|None, which: str, key: str, active: bool=False):
+    # Wrap each to apply icon style & active state
+    st.markdown(f"<div class='nav-row{' active' if active else ''}' data-which='{which}'>", unsafe_allow_html=True)
+    if st.button(label, key=key):
         _set_params(view=target_view); st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-
-# current view
 _v = _get_params().get("view")
 view_param = (_v[0] if isinstance(_v, list) else _v) or ""
 
-# sidebar (always visible)
 with st.sidebar:
-    st.markdown("<div class='nav-stack'>", unsafe_allow_html=True)
-    _nav_row("🏠", "Home", None, key="nav_home", active=(view_param==""))
-    _nav_row("🧭", "Resources", "resources", key="nav_res", active=(view_param=="resources"))
-    _nav_row("🗂️", "All", "all", key="nav_all", active=(view_param=="all"))
+    st.markdown("<div class='nav-list'>", unsafe_allow_html=True)
+    _nav("Home",      None,        which="home",      key="nav_home", active=(view_param==""))
+    _nav("Resources", "resources", which="resources", key="nav_res",  active=(view_param=="resources"))
+    _nav("All",       "all",       which="all",       key="nav_all",  active=(view_param=="all"))
     st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ------------ Router (unchanged) ------------
+# ---- Router (AFTER sidebar so it never disappears) ----
 if view_param == "resources":
     render_resources_page(); st.stop()
 elif view_param == "all":
     render_all_resources_page(); st.stop()
-# else: default Quick Study view continues
+# else: fall through to Quick Study
+
 
 # ===== Default: Home (Quick Study) =====
 # ... your Quick Study block here ...
