@@ -1,3 +1,35 @@
+import sys, importlib.util, os
+
+def _import_local_or_data(mod_name: str, filename: str):
+    """Try regular import; if it fails, load from /mnt/data/<filename>."""
+    try:
+        return __import__(mod_name)
+    except Exception:
+        candidate = os.path.join("/mnt/data", filename)
+        if os.path.exists(candidate):
+            spec = importlib.util.spec_from_file_location(mod_name, candidate)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore
+            sys.modules[mod_name] = mod
+            return mod
+        raise  # neither local nor /mnt/data available
+
+# make sure the app folder is in path, then attempt imports with fallback
+if "/mount/src/studybloom-clean" not in sys.path:
+    sys.path.append("/mount/src/studybloom-clean")
+
+pdf_utils = _import_local_or_data("pdf_utils", "pdf_utils.py")
+llm       = _import_local_or_data("llm", "llm.py")
+
+# now import the actual functions you need from the loaded modules
+from pdf_utils import extract_any
+from llm import (
+    summarize_text,
+    generate_quiz_from_notes,
+    generate_flashcards_from_notes,
+    grade_free_answer,
+)
+
 import streamlit as st
 
 st.markdown("""
