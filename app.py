@@ -192,7 +192,7 @@ else:
 
 # ---------- Top bar ----------
 def _topbar():
-    left, _ = st.columns([1, 9])
+    left, _ = st.columns([9, 9])
     with left:
         st.markdown("<h1 style='margin:0;'>StudyBloom</h1>", unsafe_allow_html=True)
 
