@@ -6,75 +6,83 @@ import streamlit as st
 st.markdown("""
 <style>
 /* =========================
-   Light Theme + Compact UI
+   FONT + COLOR SYSTEM
    ========================= */
-
-/* Font */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif; }
 
-/* Color tokens */
-:root{
+html, body, [class*="css"] {
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+:root {
   --bg: #ffffff;
-  --text: #0f172a;          /* slate-900 */
-  --text-dim: #334155;      /* slate-700 */
-  --border: #1e3a8a;        /* dark blue */
-  --border-subtle: #cbd5e1; /* slate-300 */
-  --primary: #1e3a8a;       /* dark blue */
-  --primary-hover: #172554; /* darker */
+  --text: #0f172a;
+  --text-dim: #334155;
+  --border: #1e3a8a;
+  --border-subtle: #cbd5e1;
+  --primary: #1e3a8a;
+  --primary-hover: #172554;
   --surface: #ffffff;
 }
 
-/* Page + container */
-body { background: var(--bg); color: var(--text); }
-.block-container{
-  max-width: 1100px !important;            /* keep classic width */
+/* =========================
+   PAGE CONTAINER + HEADINGS
+   ========================= */
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.block-container {
+  max-width: 1100px !important;
   padding: 1rem 1.25rem 2rem 1.25rem !important;
   margin: 0 auto !important;
   box-shadow: inset 1px 0 var(--border-subtle), inset -1px 0 var(--border-subtle);
 }
 
-/* Headings */
-h1{ font-size: 2rem; font-weight:700; margin:.75rem 0 .5rem; color:var(--text); }
-h2{ font-size: 1.5rem; font-weight:700; margin:.65rem 0 .45rem; }
-h3{ font-size: 1.15rem; font-weight:600; margin:.5rem 0 .35rem; }
+h1 { font-size: 2rem; font-weight: 700; margin: .75rem 0 .5rem; color: var(--text); }
+h2 { font-size: 1.5rem; font-weight: 700; margin: .65rem 0 .45rem; }
+h3 { font-size: 1.15rem; font-weight: 600; margin: .5rem 0 .35rem; }
 
-/* Brand title */
-.title-main{
+/* Brand Title */
+.title-main {
   font-size: 2.8rem;
   font-weight: 800;
   color: var(--primary);
-  letter-spacing: .5px;
-  margin-top: .5rem;
+  letter-spacing: 0.5px;
+  margin-top: 0.5rem;
   margin-bottom: 1.25rem;
 }
 
-/* Dividers */
-hr, .stDivider{ border-color: var(--border-subtle) !important; opacity:.9; }
+/* Divider */
+hr, .stDivider { border-color: var(--border-subtle) !important; opacity: .9; }
 
-/* Inputs / selects / textareas */
+/* =========================
+   INPUTS / SELECTS / TEXTAREAS
+   ========================= */
 .stTextInput>div>div>input,
 .stTextArea textarea,
-[data-baseweb="input"] input{
+[data-baseweb="input"] input {
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
   border-radius: 10px !important;
 }
-.stSelectbox>div>div{
+.stSelectbox>div>div {
   border: 1px solid var(--border) !important;
   border-radius: 10px !important;
   background: var(--surface) !important;
 }
-.stSlider>div{ padding-top: .15rem !important; }
-[data-testid="stFileUploadDropzone"]{
+[data-testid="stFileUploadDropzone"] {
   background: var(--surface) !important;
   border: 1px dashed var(--border) !important;
   border-radius: 12px !important;
 }
 
-/* Buttons */
-.stButton>button{
+/* =========================
+   BUTTONS
+   ========================= */
+.stButton>button {
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
@@ -82,93 +90,123 @@ hr, .stDivider{ border-color: var(--border-subtle) !important; opacity:.9; }
   padding: .45rem .8rem !important;
   font-weight: 600 !important;
 }
-.stButton>button[kind="primary"]{
+.stButton>button[kind="primary"] {
   background: var(--primary) !important;
-  color: #fff !important;
+  color: #ffffff !important;
   border: 1px solid var(--primary) !important;
 }
-.stButton>button:hover{ filter: brightness(.98); }
-.stButton>button[kind="primary"]:hover{ background: var(--primary-hover) !important; }
-
-/* Optional utility tints for specific actions */
-.btn-danger>button{ background:#ef4444 !important; color:#fff !important; border-color:#ef4444 !important; }
-.btn-warning>button{ background:#f59e0b !important; color:#111 !important; border-color:#f59e0b !important; }
-.btn-success>button{ background:#16a34a !important; color:#fff !important; border-color:#16a34a !important; }
+.stButton>button:hover { filter: brightness(.98); }
+.stButton>button[kind="primary"]:hover { background: var(--primary-hover) !important; }
 
 /* =========================
-   Sidebar: Account / Nav / Sign out
+   SIDEBAR (NO ACCOUNT / SIGN OUT)
    ========================= */
+[data-testid="collapsedControl"] { display: none !important; }
 
-/* keep sidebar visible */
-[data-testid="collapsedControl"]{ display:none !important; }
-
-/* sidebar container becomes flex column with top/middle/bottom regions */
-section[data-testid="stSidebar"]{
+section[data-testid="stSidebar"] {
   width: 180px !important;
   min-width: 180px !important;
   background: #f8fafc !important;
-  display: flex !important;
-  flex-direction: column !important;
-  justify-content: space-between !important;
+  border-right: 1px solid var(--border-subtle) !important;
   padding: 12px 8px !important;
-  border-right: 1px solid var(--border-subtle);
 }
-section[data-testid="stSidebar"] .block-container{ padding: 0 !important; width: 100% !important; }
-
-/* regions */
-.sidebar-top{ display:flex; justify-content:center; align-items:center; padding: 6px 0 10px; }
-.sidebar-middle{ display:flex; flex-direction:column; align-items:center; gap:8px; padding: 4px 6px; }
-.sidebar-bottom{ display:flex; justify-content:center; padding: 10px 6px 12px; margin-top:auto; }
-
-/* Account icon button (grey circular) */
-.account-btn .stButton>button{
-  width: 48px !important; height: 48px !important;
-  border-radius: 50% !important;
-  background: #e5e7eb !important;      /* gray-200 */
-  border: 1px solid #94a3b8 !important; /* slate-400 */
-  color: #111827 !important;            /* gray-900 */
-  font-size: 22px !important;
-  display:flex !important; align-items:center !important; justify-content:center !important;
+section[data-testid="stSidebar"] .block-container {
+  padding: 0 !important;
+  width: 100% !important;
 }
-.account-btn .stButton>button:hover{ background:#e2e8f0 !important; }
-
-/* Middle nav buttons (Home / Resources / All) */
-.nav-btn .stButton>button{
-  width: 92% !important; height: 42px !important;
-  display:flex !important; align-items:center !important; justify-content:flex-start !important;
-  gap: 10px !important; padding: 6px 12px !important;
-  border-radius: 10px !important; font-size: 15px !important;
-  background:#fff !important; color: var(--text) !important; border: 1px solid var(--border) !important;
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
-.nav-btn .stButton>button:hover{ background:#eef2ff !important; }
-.nav-btn.active .stButton>button{ background:#dbeafe !important; border-width:2px !important; }
-
-/* Bottom sign-out (red border) */
-.signout-btn .stButton>button{
-  width: 92% !important; height: 42px !important;
+.nav-btn .stButton>button {
+  width: 95% !important;
+  height: 42px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  padding: 6px 12px !important;
   border-radius: 10px !important;
-  border: 1px solid #ef4444 !important;
-  color: #ef4444 !important;
-  background: #ffffff !important;
-  font-weight: 700 !important;
+  font-size: 15px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  border: 1px solid #1e3a8a !important;
 }
-.signout-btn .stButton>button:hover{ background:#fee2e2 !important; }
+.nav-btn .stButton>button:hover { background: #eef2ff !important; }
+.nav-btn.active .stButton>button { background: #dbeafe !important; border-width: 2px !important; }
 
 /* =========================
-   Progress / Metrics / Code / Expanders
+   HEADER: TITLE + ICON + SIGN OUT
    ========================= */
-.stProgress>div>div{ background:#e2e8f0 !important; border-radius:10px !important; }
-.stProgress>div>div>div{ background: var(--primary) !important; }
-[data-testid="stMetricValue"]{ color: var(--primary) !important; font-weight:700; }
-code, pre{ background:#f1f5f9 !important; color:#0f172a !important; border-radius:8px !important; }
-.stExpander, .stAlert, .stDataFrame{
-  background:#ffffff !important; border:1px solid var(--border-subtle) !important; border-radius:12px !important;
+.header-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0;
 }
 
-/* Tighter generic block spacing (safe) */
-.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir { margin-top:.25rem !important; margin-bottom:.25rem !important; }
+.header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Account (Head Icon) */
+.header-buttons .account-icon > button {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 50% !important;
+  background: #e5e7eb !important;
+  border: 1px solid #1e3a8a !important;
+  color: #1e3a8a !important;
+  font-size: 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: background 0.2s ease-in-out;
+}
+.header-buttons .account-icon > button:hover { background: #dbeafe !important; }
+
+/* Sign Out */
+.header-buttons .signout > button {
+  font-weight: 600 !important;
+  border-radius: 12px !important;
+  padding: 0.45rem 1rem !important;
+  font-size: 0.95rem !important;
+  border: 1px solid #ef4444 !important;
+  color: #b91c1c !important;
+  background: #ffffff !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  transition: all 0.15s ease-in-out;
+}
+.header-buttons .signout > button:hover { background: #fee2e2 !important; }
+
+/* =========================
+   PROGRESS / METRICS / CODE
+   ========================= */
+.stProgress>div>div { background: #e2e8f0 !important; border-radius: 10px !important; }
+.stProgress>div>div>div { background: var(--primary) !important; }
+[data-testid="stMetricValue"] { color: var(--primary) !important; font-weight: 700; }
+code, pre { background: #f1f5f9 !important; color: #0f172a !important; border-radius: 8px !important; }
+.stExpander, .stAlert, .stDataFrame {
+  background: #ffffff !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 12px !important;
+}
+
+/* =========================
+   COMPACT SPACING
+   ========================= */
+.css-1wvskd3, .css-1v3fvcr, .css-1dp5vir {
+  margin-top: .25rem !important;
+  margin-bottom: .25rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ---- CSS: compact action buttons, avoid wrapping ----
