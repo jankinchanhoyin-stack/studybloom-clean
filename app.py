@@ -1467,6 +1467,332 @@ def render_community_page():
     else:
         st.caption("No friends to show yet — send a request above!")
 
+def render_quick_study_page():
+    st.title("⚡ Quick Study")
+
+    # Require sign-in (to save results under folders)
+    if "sb_user" not in st.session_state:
+        st.info("Please sign in to create and save study materials.")
+        return
+
+    # ---------- Bootstrap state (consume “just created” IDs BEFORE widgets) ----------
+    st.session_state.setdefault("qs_subject_id", None)
+    st.session_state.setdefault("qs_exam_id", None)
+
+    if "__qs_new_subject_id" in st.session_state:
+        st.session_state["qs_subject_id"] = st.session_state.pop("__qs_new_subject_id")
+        # Clear the “create new” checkbox so it doesn't stick
+        if "qs_make_new_subject" in st.session_state:
+            del st.session_state["qs_make_new_subject"]
+        # Reset downstream
+        st.session_state["qs_exam_id"] = None
+
+    if "__qs_new_exam_id" in st.session_state:
+        st.session_state["qs_exam_id"] = st.session_state.pop("__qs_new_exam_id")
+        if "qs_make_new_exam" in st.session_state:
+            del st.session_state["qs_make_new_exam"]
+
+    # Refresh folders (subjects/exams) for pickers
+    try:
+        ALL_FOLDERS_LOCAL = list_folders()
+    except Exception:
+        ALL_FOLDERS_LOCAL = []
+        st.warning("Could not load folders.")
+
+    def _roots(rows):  # subjects
+        return [r for r in rows if not r.get("parent_id")]
+
+    subjects = _roots(ALL_FOLDERS_LOCAL)
+    subj_names = [s["name"] for s in subjects]
+    subj_by_id = {s["id"]: s for s in subjects}
+
+    # ---------- SUBJECT ----------
+    st.markdown("### Subject")
+    make_new_subject = st.checkbox("Create a new subject", key="qs_make_new_subject", value=False)
+
+    subject_id = st.session_state.get("qs_subject_id")
+    if make_new_subject:
+        new_subject = st.text_input("New subject name", placeholder="e.g., A-Level Mathematics", key="qs_new_subject")
+        if st.button("Save subject", key="qs_save_subject_btn"):
+            name = (new_subject or "").strip()
+            if not name:
+                st.warning("Enter a subject name.")
+            elif name.lower() in {n.lower() for n in subj_names}:
+                st.error("This subject already exists. Please use a different name.")
+            else:
+                try:
+                    created = create_folder(name, None)
+                    # Stash new subject -> select on next run
+                    st.session_state["__qs_new_subject_id"] = created["id"]
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Create failed: {e}")
+    else:
+        # Existing subject picker
+        label = "— select —"
+        if subject_id and subject_id in subj_by_id:
+            label = subj_by_id[subject_id]["name"]
+        pick = st.selectbox("Use existing subject", ["— select —"] + subj_names, index=0, key="qs_subject_pick")
+        if pick in subj_names:
+            st.session_state["qs_subject_id"] = next(s["id"] for s in subjects if s["name"] == pick)
+            subject_id = st.session_state["qs_subject_id"]
+
+    # ---------- EXAM ----------
+    st.markdown("### Exam")
+    exam_id = st.session_state.get("qs_exam_id")
+    exams = []
+    if subject_id:
+        exams = [f for f in ALL_FOLDERS_LOCAL if f.get("parent_id") == subject_id]
+        exam_names = [e["name"] for e in exams]
+        make_new_exam = st.checkbox("Create a new exam", key="qs_make_new_exam", value=False)
+
+        if make_new_exam:
+            new_exam = st.text_input("New exam name", placeholder="e.g., IGCSE May 2026", key="qs_new_exam")
+            if st.button("Save exam", key="qs_save_exam_btn"):
+                name = (new_exam or "").strip()
+                if not name:
+                    st.warning("Enter an exam name.")
+                elif name.lower() in {n.lower() for n in exam_names}:
+                    st.error("This exam already exists under that subject.")
+                else:
+                    try:
+                        created = create_folder(name, subject_id)
+                        st.session_state["__qs_new_exam_id"] = created["id"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Create failed: {e}")
+        else:
+            # existing exam picker
+            label = "— select —"
+            if exam_id and any(e["id"] == exam_id for e in exams):
+                label = next(e["name"] for e in exams if e["id"] == exam_id)
+            pick = st.selectbox("Use existing exam", ["— select —"] + exam_names, index=0, key="qs_exam_pick")
+            if pick in exam_names:
+                st.session_state["qs_exam_id"] = next(e["id"] for e in exams if e["name"] == pick)
+                exam_id = st.session_state["qs_exam_id"]
+    else:
+        st.caption("Pick or create a Subject first to reveal Exams.")
+
+    # ---------- TOPIC ----------
+    st.markdown("### Topic")
+    topic_name = ""
+    if exam_id:
+        topic_name = st.text_input("New topic name", placeholder="e.g., Differentiation", key="qs_new_topic")
+    else:
+        st.caption("Pick or create an Exam first to add a Topic.")
+
+    st.markdown("---")
+
+    # ---------- EXTRA CONTEXT ----------
+    st.markdown("**Subject (free text, improves accuracy & quality):**")
+    subject_hint = st.text_input(
+        "e.g., Mathematics (Calculus), Biology (Cell Division), History (Cold War)",
+        value="General",
+        key="qs_subject_hint"
+    )
+
+    audience_label = st.selectbox(
+        "Audience",
+        ["University", "A-Level", "IB", "GCSE", "HKDSE", "Primary"],
+        index=0,
+        key="qs_audience_label"
+    )
+    aud_map = {
+        "University": "university",
+        "A-Level": "A-Level",
+        "IB": "A-Level",
+        "GCSE": "high school",
+        "HKDSE": "high school",
+        "Primary": "primary"
+    }
+    audience = aud_map.get(audience_label, "high school")
+    detail = st.slider("Detail level", 1, 5, 3, key="qs_detail")
+
+    st.markdown("### Quiz type")
+    quiz_mode = st.radio("Choose quiz format", ["Free response", "Multiple choice"], index=0, horizontal=True, key="qs_quiz_mode")
+    mcq_options = 4
+    if quiz_mode == "Multiple choice":
+        mcq_options = st.slider("MCQ options per question", 3, 6, 4, key="qs_mcq_opts")
+
+    files = st.file_uploader(
+        "Upload files (PDF, PPTX, JPG, PNG, TXT)",
+        type=["pdf", "pptx", "jpg", "jpeg", "png", "txt"],
+        accept_multiple_files=True,
+        key="qs_files",
+    )
+
+    # ---------- What to generate ----------
+    st.markdown("### What to generate")
+    sel_notes = st.checkbox("📄 Notes", value=True, key="qs_sel_notes")
+    sel_flash = st.checkbox("🧠 Flashcards", value=True, key="qs_sel_flash")
+    sel_quiz  = st.checkbox("🧪 Quiz", value=True, key="qs_sel_quiz")
+
+    # ---------- Gate Generate button ----------
+    has_topic_text = bool((st.session_state.get("qs_new_topic") or "").strip())
+    has_files = bool(files)
+    has_selection = sel_notes or sel_flash or sel_quiz
+    can_generate = bool(subject_id and exam_id and has_topic_text and has_files and has_selection)
+
+    gen_clicked = st.button("Generate", type="primary", key="qs_generate_btn", disabled=not can_generate)
+
+    if gen_clicked and can_generate:
+        # Resolve subject/exam from current selections
+        subjects_now = _roots(list_folders())
+        subj_map_now = {s["name"]: s["id"] for s in subjects_now}
+        subject_id = subject_id or subj_map_now.get(st.session_state.get("qs_subject_pick"))
+
+        exams_now = [f for f in list_folders() if subject_id and f.get("parent_id") == subject_id]
+        exam_map_now = {e["name"]: e["id"] for e in exams_now}
+        exam_id = exam_id or exam_map_now.get(st.session_state.get("qs_exam_pick"))
+
+        # Create the topic folder (prevent duplicate name under exam)
+        topic_id = None
+        topic_name_in = (st.session_state.get("qs_new_topic") or "").strip()
+        if exam_id and topic_name_in:
+            existing_topics = [f for f in list_folders() if f.get("parent_id") == exam_id]
+            if topic_name_in.lower() in {t["name"].lower() for t in existing_topics}:
+                st.error("Topic already exists under this exam. Please choose a different name.")
+                st.stop()
+            created = create_folder(topic_name_in, exam_id)
+            topic_id = created["id"]
+            topic_name_in = created["name"]
+
+        dest_folder = topic_id or exam_id or subject_id or None
+        base_title = (
+            topic_name_in
+            or (next((e["name"] for e in exams_now if e["id"] == exam_id), None) if exam_id else None)
+            or (next((s["name"] for s in subjects_now if s["id"] == subject_id), None) if subject_id else None)
+            or (subject_hint or "Study Pack")
+        )
+
+        prog = st.progress(0, text="Starting…")
+        try:
+            prog.progress(10, text="Extracting text…")
+            text = extract_any(files)
+            # Decide sizes automatically
+            auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
+            
+            # NEW: pull verbatim defs from source text
+            verbatim_defs = extract_verbatim_definitions(text)
+            
+            prog.progress(35, text="Summarising with AI…")
+            # Slightly more detailed: nudge detail up by one (capped at 5)
+            detail_boosted = min(5, (detail or 3) + 1)
+            data = summarize_text(
+                text,
+                audience=audience,
+                detail=detail_boosted,          # ← make notes a bit longer
+                subject=subject_hint,
+                verbatim_definitions=verbatim_defs  # ← ensure exact wording appears in notes
+            )
+            
+            summary_id = flash_id = quiz_id = None
+            
+            if sel_flash:
+                prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
+                try:
+                    cards = generate_flashcards_from_notes(
+                        data,
+                        audience=audience,
+                        target_count=auto_fc,
+                        verbatim_definitions=verbatim_defs  # ← exact wording on definition cards
+                    )
+                except Exception as e:
+                    st.warning(f"Flashcards skipped: {e}")
+                    cards = []
+            
+            if sel_quiz:
+                prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
+                qs = generate_quiz_from_notes(
+                    data,
+                    subject=subject_hint,
+                    audience=audience,
+                    num_questions=auto_qs,
+                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+                    mcq_options=mcq_options,
+                    verbatim_definitions=verbatim_defs  # ← exact wording required for definition Qs
+                )
+            else:
+                qs = None
+            if not text.strip():
+                st.error("No text detected in the uploaded files.")
+                st.stop()
+
+            # Decide sizes automatically
+            auto_fc, auto_qs = _autosize_counts(text, detail, quiz_mode)
+
+            prog.progress(35, text="Summarising with AI…")
+            data = summarize_text(text, audience=audience, detail=detail, subject=subject_hint)
+
+            summary_id = flash_id = quiz_id = None
+
+            if sel_flash:
+                prog.progress(55, text=f"Generating ~{auto_fc} flashcards…")
+                try:
+                    cards = generate_flashcards_from_notes(data, audience=audience, target_count=auto_fc)
+                except Exception as e:
+                    st.warning(f"Flashcards skipped: {e}")
+                    cards = []
+
+            if sel_quiz:
+                prog.progress(70, text=f"Generating ~{auto_qs} quiz questions…")
+                qs = generate_quiz_from_notes(
+                    data,
+                    subject=subject_hint,
+                    audience=audience,
+                    num_questions=auto_qs,
+                    mode=("mcq" if quiz_mode == "Multiple choice" else "free"),
+                    mcq_options=mcq_options,
+                )
+            else:
+                qs = None
+
+            prog.progress(85, text="Saving selected items…")
+
+            if sel_notes:
+                title_notes = f"📄 {base_title} — Notes"
+                summary = save_item("summary", title_notes, data, dest_folder)
+                summary_id = summary.get("id")
+
+            if sel_flash and 'cards' in locals() and cards:
+                title_flash = f"🧠 {base_title} — Flashcards"
+                flash = save_item("flashcards", title_flash, {"flashcards": cards}, dest_folder)
+                flash_id = flash.get("id")
+
+            if sel_quiz and qs:
+                title_quiz = f"🧪 {base_title} — Quiz"
+                quiz_payload = {"questions": qs}
+                if quiz_mode == "Multiple choice":
+                    quiz_payload["type"] = "mcq"
+                    quiz_payload["mcq_options"] = mcq_options
+                quiz_item = save_item("quiz", title_quiz, quiz_payload, dest_folder)
+                quiz_id = quiz_item.get("id")
+
+            prog.progress(100, text="Done!")
+            st.success("Saved ✅")
+
+            st.session_state["qs_created_summary_id"] = summary_id or None
+            st.session_state["qs_created_flash_id"] = flash_id or None
+            st.session_state["qs_created_quiz_id"] = quiz_id or None
+
+        except Exception as e:
+            st.error(f"Generation failed: {e}")
+
+    # ---------- Show “Open” buttons if something was created ----------
+    sid = st.session_state.get("qs_created_summary_id")
+    fid = st.session_state.get("qs_created_flash_id")
+    qid = st.session_state.get("qs_created_quiz_id")
+
+    if sid or fid or qid:
+        st.markdown("### Open")
+        c1, c2, c3 = st.columns(3)
+        if sid and c1.button("Open Notes", type="primary", use_container_width=True, key="qs_open_notes"):
+            _set_params(item=sid, view="all"); st.rerun()
+        if fid and c2.button("Open Flashcards", use_container_width=True, key="qs_open_flash"):
+            _set_params(item=fid, view="all"); st.rerun()
+        if qid and c3.button("Open Quiz", use_container_width=True, key="qs_open_quiz"):
+            _set_params(item=qid, view="all"); st.rerun()
+    return
 
 def render_resources_page():
     # ← Home (top-left)
