@@ -726,7 +726,6 @@ def render_resources_page():
         name = folder.get("name", "Untitled")
         when = (folder.get("created_at", "")[:16].replace("T", " "))
         cnt = count_items_in_folder(folder["id"])
-        badge = f"📄 {cnt['summary']}  🧠 {cnt['flashcards']}  🧪 {cnt['quiz']}"
     
         # Row 1: title + meta (two columns, single nesting level)
         left, right = cont.columns([7.5, 4.5])
