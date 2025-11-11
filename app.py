@@ -1178,7 +1178,7 @@ with st.sidebar:
     for label, icon, page in [
         ("Quick Study", "⚡", "home"),
         ("Resources", "🧭", "resources"),
-        ("All", "📁", "all"),
+        ("All", "📁", "all"),("My Profile","👤","account")
     ]:
         st.markdown("<div class='nav-btn'>", unsafe_allow_html=True)
         if st.button(f"{icon}  {label}", key=f"nav_{page}"):
