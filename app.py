@@ -618,22 +618,37 @@ else:
 def _roots(rows): return [r for r in rows if not r.get("parent_id")]  # subjects
 
 # ------------- Account Page -------------
+st.markdown("""
+<style>
+#acct_signout button {
+  border: 1px solid #ef4444 !important;
+  color: #b91c1c !important;
+  background: #fff !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+}
+#acct_signout button:hover { background: #fee2e2 !important; }
+</style>
+""", unsafe_allow_html=True)
+
 params = _get_params()
-if (params.get("view") == "account") or (isinstance(params.get("view"), list) and params.get("view")[0] == "account"):
-    st.markdown("#### ")
+is_account = (params.get("view") == "account") or (
+    isinstance(params.get("view"), list) and params.get("view")[0] == "account"
+)
+if is_account:
     # Back, top-left
-    bcol, _ = st.columns([1,9])
+    bcol, _ = st.columns([1, 9])
     if bcol.button("← Back", key="acct_back"):
         _set_params(view=None)
         st.rerun()
 
     st.title("My Account")
+
     if "sb_user" not in st.session_state:
         st.info("Please sign in first.")
         st.stop()
 
-    # Show current values
-    from auth_rest import current_user, update_profile, change_password
+    # --- Load current user ---
     try:
         u = current_user()
     except Exception as e:
@@ -641,40 +656,84 @@ if (params.get("view") == "account") or (isinstance(params.get("view"), list) an
         st.stop()
 
     meta = (u.get("user_metadata") or {})
-    curr_display = meta.get("display_name","")
-    curr_username = meta.get("username","")
-    curr_email = u.get("email","")
+    curr_display = meta.get("display_name", "")
+    curr_username = meta.get("username", "")
+    curr_email   = u.get("email", "")
 
-    st.subheader("Profile")
-    nd = st.text_input("Display name", value=curr_display, key="acct_disp")
-    nu = st.text_input("Username", value=curr_username, key="acct_uname")
-    st.text_input("Email", value=curr_email, key="acct_email", disabled=True)
+    # --- Profile (left) + Password (right) ---
+    cL, cR = st.columns([3, 2])
 
-    if st.button("Save profile", type="primary", key="acct_save_profile"):
-        try:
-            update_profile(display_name=nd, username=nu)
-            st.success("Profile updated.")
-            # Refresh in-memory user so top bar reflects changes
-            st.session_state["sb_user"]["user"]["user_metadata"] = {**(st.session_state["sb_user"]["user"].get("user_metadata") or {}), "display_name": nd, "username": nu}
-        except Exception as e:
-            st.error(f"Update failed: {e}")
+    with cL:
+        st.subheader("Profile")
+        nd = st.text_input("Display name", value=curr_display, key="acct_disp")
+        nu = st.text_input("Username", value=curr_username, key="acct_uname")
+        st.text_input("Email", value=curr_email, key="acct_email", disabled=True)
 
-    st.subheader("Change password")
-    np1 = st.text_input("New password", type="password", key="acct_pwd1")
-    np2 = st.text_input("Confirm new password", type="password", key="acct_pwd2")
-    if st.button("Change password", key="acct_change_pwd"):
-        if not np1 or not np2:
-            st.warning("Enter and confirm your new password.")
-        elif np1 != np2:
-            st.error("Passwords do not match.")
-        else:
+        if st.button("Save profile", type="primary", key="acct_save_profile"):
             try:
-                change_password(np1)
-                st.success("Password changed.")
+                update_profile(display_name=nd, username=nu)
+                # refresh in-memory user so header reflects changes
+                st.session_state["sb_user"]["user"]["user_metadata"] = {
+                    **(st.session_state["sb_user"]["user"].get("user_metadata") or {}),
+                    "display_name": nd,
+                    "username": nu,
+                }
+                st.success("Profile updated.")
             except Exception as e:
-                st.error(f"Password change failed: {e}")
+                st.error(f"Update failed: {e}")
+
+    with cR:
+        st.subheader("Change password")
+        np1 = st.text_input("New password", type="password", key="acct_pwd1")
+        np2 = st.text_input("Confirm new password", type="password", key="acct_pwd2")
+        if st.button("Change password", key="acct_change_pwd"):
+            if not np1 or not np2:
+                st.warning("Enter and confirm your new password.")
+            elif np1 != np2:
+                st.error("Passwords do not match.")
+            else:
+                try:
+                    change_password(np1)
+                    st.success("Password changed.")
+                except Exception as e:
+                    st.error(f"Password change failed: {e}")
+
+    st.divider()
+    st.markdown("### Account actions")
+
+    # Right-aligned Sign out button
+    _, sign_col = st.columns([6, 1])
+    with sign_col:
+        if st.button("Sign out", key="acct_signout"):
+            # Clear cookies
+            try:
+                if cookies:
+                    if "sb_access" in cookies:
+                        del cookies["sb_access"]
+                    if "sb_email" in cookies:
+                        del cookies["sb_email"]
+                    cookies.save()
+            except Exception:
+                pass
+
+            # Clear session + prevent immediate auto-restore
+            st.session_state.pop("sb_user", None)
+            st.session_state.pop("pending_cookie_token", None)
+            st.session_state.pop("pending_cookie_email", None)
+            st.session_state["just_logged_out"] = True
+
+            # Best-effort server sign-out
+            try:
+                sign_out()
+            except Exception:
+                pass
+
+            # Go home
+            _set_params(view=None)
+            st.rerun()
 
     st.stop()
+
 
 
 # ---------------- Item PAGE ----------------
