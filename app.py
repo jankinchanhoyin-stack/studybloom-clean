@@ -845,44 +845,152 @@ def render_resources_page():
                     except Exception as e: st.error(f"Delete failed: {e}")
 
 def render_all_resources_page():
-    # ← Home (top-left)
-    bcol, _ = st.columns([1, 9])
-    if bcol.button("← Home", key="all_back_home"):
-        _set_params(view=None)
-        st.rerun()
+    # --------- Header / Back ---------
+    top_l, _ = st.columns([1, 9])
+    if top_l.button("← Home", key="all_back_home"):
+        _set_params(view=None); st.rerun()
 
-    st.title("🗂️ All Resources (Newest)")
+    st.markdown("## 🗂️ All Resources (Newest)")
+
     if "sb_user" not in st.session_state:
         st.info("Log in to view your resources."); return
 
-    emoji = {"summary":"📄","flashcards":"🧠","quiz":"🧪"}
-    try: all_items = list_items(None, limit=1000)
-    except: all_items = []
-    all_items.sort(key=lambda x: x.get("created_at",""), reverse=True)
-    if not all_items: st.caption("Nothing yet — create something in Quick Study!")
-    for it in all_items:
-        icon = emoji.get(it["kind"], "📄")
-        c0, c1, c2, c3 = st.columns([8,1.2,1.2,1.2])
-        c0.markdown(f"{icon} **{it['title']}** — {it['created_at'][:16].replace('T',' ')}")
-        with c1:
-            if st.button("Open", key=f"all_open_{it['id']}", use_container_width=True):
-                _set_params(item=it['id'], view="all"); st.rerun()
-        with c2:
-            if not st.session_state.get(f"edit_item_all_{it['id']}", False):
-                if st.button("Rename", key=f"all_btn_rename_{it['id']}", use_container_width=True):
-                    st.session_state[f"edit_item_all_{it['id']}"]=True; st.rerun()
-            else:
-                newt = st.text_input("New title", value=it["title"], key=f"all_rn_{it['id']}")
-                s1,s2 = st.columns(2)
-                if s1.button("Save", key=f"all_save_{it['id']}"):
-                    try: rename_item(it["id"], newt.strip()); st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
-                    except Exception as e: st.error(f"Rename failed: {e}")
-                if s2.button("Cancel", key=f"all_cancel_{it['id']}"):
-                    st.session_state[f"edit_item_all_{it['id']}"]=False; st.rerun()
-        with c3:
-            if st.button("Delete", key=f"all_del_{it['id']}", use_container_width=True):
-                try: delete_item(it["id"]); st.success("Deleted."); st.rerun()
-                except Exception as e: st.error(f"Delete failed: {e}")
+    # --------- Load data ---------
+    try:
+        folders = list_folders()  # includes subjects/exams/topics
+    except Exception:
+        folders = []
+    try:
+        items = list_items(None, limit=1000)  # newest first later
+    except Exception:
+        items = []
+
+    # Maps for quick lookup
+    folder_by_id = {f["id"]: f for f in folders}
+
+    def _folder_path(fid: str) -> str:
+        # Build "Subject / Exam / Topic" path
+        parts = []
+        cur = folder_by_id.get(fid)
+        # climb up to root
+        while cur:
+            parts.append(cur.get("name",""))
+            pid = cur.get("parent_id")
+            cur = folder_by_id.get(pid) if pid else None
+        parts.reverse()
+        return " / ".join([p for p in parts if p])
+
+    def _kind_icon(kind: str) -> str:
+        return {"summary":"📄", "flashcards":"🧠", "quiz":"🧪"}.get(kind, "📄")
+
+    # --------- Controls ---------
+    ctl1, ctl2, ctl3, ctl4 = st.columns([4, 4, 2.2, 2.2])
+    q = ctl1.text_input("Search titles", key="all_search", placeholder="e.g., Factorisation, Cold War…")
+    kind_pick = ctl2.multiselect(
+        "Filter by type",
+        ["Notes","Flashcards","Quiz"],
+        default=["Notes","Flashcards","Quiz"],
+        key="all_kind"
+    )
+    sort_pick = ctl3.selectbox("Sort", ["Newest", "Oldest", "Title A→Z"], index=0, key="all_sort")
+    grouped = ctl4.checkbox("Group by Topic", value=True, key="all_group")
+
+    # Normalize kinds
+    kind_map = {"Notes":"summary", "Flashcards":"flashcards", "Quiz":"quiz"}
+    allowed_kinds = {kind_map[k] for k in kind_pick}
+
+    # --------- Filter + sort ---------
+    rows = [it for it in items if it.get("kind") in allowed_kinds]
+
+    if q:
+        ql = q.strip().lower()
+        rows = [it for it in rows if ql in (it.get("title","").lower())]
+
+    if sort_pick == "Newest":
+        rows.sort(key=lambda r: r.get("created_at",""), reverse=True)
+    elif sort_pick == "Oldest":
+        rows.sort(key=lambda r: r.get("created_at",""))
+    else:
+        rows.sort(key=lambda r: r.get("title","").lower())
+
+    # --------- UI helpers ---------
+    def _row_actions(it, suffix="all"):
+        c0, c1, c2, c3 = st.columns([7.5, 1.1, 1.1, 1.1])
+        # title (click to open)
+        title = it.get("title","Untitled")
+        when = (it.get("created_at","")[:16].replace("T"," "))
+        meta = f" — {when}" if when else ""
+        c0.markdown(f"**{_kind_icon(it['kind'])} {title}**<span style='opacity:.6'>{meta}</span>", unsafe_allow_html=True)
+
+        # Open
+        if c1.button("Open", key=f"{suffix}_open_{it['id']}", use_container_width=True):
+            _set_params(item=it['id'], view="all"); st.rerun()
+
+        # Rename (inline)
+        edit_key = f"{suffix}_edit_{it['id']}"
+        if not st.session_state.get(edit_key, False):
+            if c2.button("Rename", key=f"{suffix}_rn_btn_{it['id']}", use_container_width=True):
+                st.session_state[edit_key] = True; st.rerun()
+        else:
+            newt = st.text_input("New title", value=title, key=f"{suffix}_rn_val_{it['id']}")
+            s1, s2 = st.columns(2)
+            if s1.button("Save", key=f"{suffix}_rn_save_{it['id']}"):
+                try:
+                    rename_item(it["id"], (newt or "").strip())
+                    st.session_state[edit_key] = False
+                    st.success("Renamed."); st.rerun()
+                except Exception as e:
+                    st.error(f"Rename failed: {e}")
+            if s2.button("Cancel", key=f"{suffix}_rn_cancel_{it['id']}"):
+                st.session_state[edit_key] = False; st.rerun()
+
+        # Delete (confirm)
+        del_key = f"{suffix}_del_{it['id']}"
+        if not st.session_state.get(del_key, False):
+            if c3.button("Delete", key=f"{suffix}_del_btn_{it['id']}", use_container_width=True):
+                st.session_state[del_key] = True; st.rerun()
+        else:
+            st.warning("Delete this item? This cannot be undone.")
+            d1, d2 = st.columns(2)
+            if d1.button("Confirm", type="primary", key=f"{suffix}_del_yes_{it['id']}"):
+                try:
+                    delete_item(it["id"]); st.success("Deleted."); st.rerun()
+                except Exception as e:
+                    st.error(f"Delete failed: {e}")
+            if d2.button("Cancel", key=f"{suffix}_del_no_{it['id']}"):
+                st.session_state[del_key] = False; st.rerun()
+
+    # --------- Render ---------
+    if not rows:
+        st.caption("No items match your filters.")
+        return
+
+    if not grouped:
+        st.markdown("#### Flat list")
+        for it in rows:
+            _row_actions(it, suffix="flat")
+        return
+
+    # Group by path "Subject / Exam / Topic"
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for it in rows:
+        path = _folder_path(it.get("folder_id")) or "Unfiled"
+        buckets[path].append(it)
+
+    # Sort groups by name
+    for path in sorted(buckets.keys(), key=lambda p: p.lower()):
+        group_items = buckets[path]
+        # header with counts
+        notes_n = sum(1 for x in group_items if x["kind"]=="summary")
+        flash_n = sum(1 for x in group_items if x["kind"]=="flashcards")
+        quiz_n  = sum(1 for x in group_items if x["kind"]=="quiz")
+        badge = f" | 📄 {notes_n}  🧠 {flash_n}  🧪 {quiz_n}"
+
+        with st.expander(f"📁 {path}{badge}", expanded=False):
+            for it in group_items:
+                _row_actions(it, suffix=f"group_{hash(path)%10000}")
+
 
 # If a view is requested, render that page directly and stop
 if view_param == "resources":
