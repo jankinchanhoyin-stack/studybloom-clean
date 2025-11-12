@@ -422,27 +422,48 @@ def sb_add_friend(friend_username: str) -> tuple[bool, str]:
         return False, f"Could not add friend: {msg}"
 
 
-def sb_sum_xp_for_window(user_id: str, start_iso: str, end_iso: str) -> int:
+def _sum_xp_from_core_tables(user_id: str, start_iso: str, end_iso: str) -> int:
     url, headers = _sb_headers()
-    q = (
-        f"{url}/rest/v1/xp_events"
+
+    # Flash: 1 XP per known=True review
+    fr = requests.get(
+        f"{url}/rest/v1/flash_reviews"
         f"?user_id=eq.{user_id}"
-        f"&occurred_at=gte.{start_iso}"
-        f"&occurred_at=lt.{end_iso}"
-        f"&select=xp"
+        f"&created_at=gte.{start_iso}"
+        f"&created_at=lt.{end_iso}"
+        f"&known=is.true"
+        f"&select=id",
+        headers=headers, timeout=25
     )
-    r = requests.get(q, headers=headers, timeout=25)
-    if r.status_code != 200:
-        return 0
-    try:
-        return int(sum(int(row.get("xp") or 0) for row in r.json()))
-    except Exception:
-        return 0
+    flash_xp = len(fr.json()) if fr.status_code == 200 else 0
+
+    # Quiz: XP = sum(correct)
+    qa = requests.get(
+        f"{url}/rest/v1/quiz_attempts"
+        f"?user_id=eq.{user_id}"
+        f"&created_at=gte.{start_iso}"
+        f"&created_at=lt.{end_iso}"
+        f"&select=correct",
+        headers=headers, timeout=25
+    )
+    quiz_xp = 0
+    if qa.status_code == 200:
+        try:
+            quiz_xp = sum(int(row.get("correct") or 0) for row in qa.json() or [])
+        except Exception:
+            pass
+
+    return flash_xp + quiz_xp
 
 def sb_get_xp_totals_for_user(user_id: str) -> dict:
-    today = sb_sum_xp_for_window(user_id, _iso_start_of_today_utc(), _iso_start_of_tomorrow_utc())
-    month = sb_sum_xp_for_window(user_id, _iso_start_of_month_utc(), _iso_start_of_next_month_utc())
-    return {"today": today, "month": month}
+    today_start = _iso_start_of_today_utc()
+    tomorrow_start = _iso_start_of_tomorrow_utc()
+    month_start = _iso_start_of_month_utc()
+    next_month_start = _iso_start_of_next_month_utc()
+    return {
+        "today": _sum_xp_from_core_tables(user_id, today_start, tomorrow_start),
+        "month": _sum_xp_from_core_tables(user_id, month_start, next_month_start),
+    }
 
 # --- Add near the top if missing ---
 import requests
@@ -484,50 +505,119 @@ def sb_is_already_friends(a_user_id: str, b_user_id: str) -> bool:
     r = requests.get(q, headers=headers, timeout=15)
     r.raise_for_status()
     return bool(r.json())
+def _find_user_by_username_ci(username: str) -> Optional[dict]:
+    url, headers = _sb_headers()
+    # case-insensitive exact match via ilike
+    # IMPORTANT: url-encode wildcard-free pattern (no *), keeps it exact-ish but CI.
+    # PostgREST: column=ilike.value
+    r = requests.get(
+        f"{url}/rest/v1/profiles?username=ilike.{username}&select=id,username,display_name",
+        headers=headers, timeout=20
+    )
+    if r.status_code == 200:
+        rows = r.json() or []
+        # Pick exact (case-insensitive) if multiple
+        for row in rows:
+            if (row.get("username") or "").lower() == username.lower():
+                return row
+        return rows[0] if rows else None
+    return None
 
-def sb_send_friend_request(target_username: str) -> str:
+
+def sb_send_friend_request(username_or_handle: str) -> str:
     """
-    Create a pending friend request to target_username.
-    Table: friend_requests (id uuid, requester_id uuid, recipient_id uuid, status text)
-    Valid statuses: 'pending','accepted','rejected'
+    Send a friend request to the user with the given username (with or without leading '@').
+    Guards against: empty input, self-requests, already-friends, duplicates, and inverse pending requests.
+    Returns a user-friendly status message.
     """
-    me = _me_id()
-    if not me:
+    # --- Resolve current user ---
+    try:
+        me = current_user()
+    except Exception as e:
+        return f"Please sign in first. ({e})"
+
+    my_id = me.get("id") or (me.get("user") or {}).get("id")
+    if not my_id:
         return "Please sign in first."
 
-    # 1) Find recipient
-    target = sb_find_profile_by_username((target_username or "").strip())
-    if not target:
-        return "No user with that username."
-    recipient_id = target["id"]
-    if recipient_id == me:
-        return "You can’t send a request to yourself."
+    # --- Normalize handle & find recipient (case-insensitive) ---
+    handle = (username_or_handle or "").strip().lstrip("@")
+    if not handle:
+        return "Enter a username."
+
+    you = _find_user_by_username_ci(handle)
+    if not you:
+        return "Username not found."
+
+    you_id = you.get("id")
+    you_un = (you.get("username") or "").strip() or handle
+
+    # --- Prevent sending to self ---
+    if you_id == my_id:
+        return "You can’t add yourself."
 
     url, headers = _sb_headers()
 
-    # 2) Block duplicates in either direction while pending
-    # requester_id=me,recipient_id=them OR requester_id=them,recipient_id=me with status pending
-    params = {
-        "or": f"(and(requester_id.eq.{me},recipient_id.eq.{recipient_id}),and(requester_id.eq.{recipient_id},recipient_id.eq.{me}))",
-        "status": "eq.pending",
-        "select": "id",
-        "limit": 1,
-    }
-    check = requests.get(f"{url}/rest/v1/friend_requests", headers=headers, params=params, timeout=20)
-    check.raise_for_status()
-    exists = check.json()
-    if exists:
-        return "A pending request already exists."
+    # --- Check existing relationships / requests (both directions) ---
+    # We consider any row with status in (pending, accepted) between the two users.
+    # PostgREST OR syntax: or=(and(a.eq.1,b.eq.2),and(a.eq.2,b.eq.1))
+    status_list = "in.(pending,accepted)"
+    or_param = (
+        f"or=("
+        f"and(requester_id.eq.{my_id},recipient_id.eq.{you_id}),"
+        f"and(requester_id.eq.{you_id},recipient_id.eq.{my_id})"
+        f")"
+    )
+    check = requests.get(
+        f"{url}/rest/v1/friend_requests"
+        f"?{or_param}"
+        f"&status={status_list}"
+        f"&select=id,requester_id,recipient_id,status,created_at",
+        headers=headers,
+        timeout=20,
+    )
+    if check.status_code == 200:
+        rows = check.json() or []
+        if rows:
+            # If any accepted row exists, they are already friends.
+            if any((r.get("status") or "").lower() == "accepted" for r in rows):
+                return f"You’re already friends with @{you_un}."
+            # Otherwise there is at least one pending row; determine direction.
+            for r in rows:
+                req, rec, st = r.get("requester_id"), r.get("recipient_id"), (r.get("status") or "").lower()
+                if st == "pending":
+                    if req == my_id and rec == you_id:
+                        return f"Request already sent to @{you_un}."
+                    if req == you_id and rec == my_id:
+                        return f"@{you_un} has already sent you a request — check Incoming and accept it."
+    else:
+        # If the check failed for any reason, fail safe (don’t create duplicates).
+        try:
+            msg = check.json()
+        except Exception:
+            msg = check.text
+        return f"Couldn’t verify existing requests ({msg}). Please try again."
 
-    # 3) Insert pending request
+    # --- Create a new pending request ---
     payload = {
-        "requester_id": me,
-        "recipient_id": recipient_id,
+        "requester_id": my_id,
+        "recipient_id": you_id,
         "status": "pending",
     }
-    r = requests.post(f"{url}/rest/v1/friend_requests", headers=headers, json=payload, timeout=20)
-    r.raise_for_status()
-    return "Friend request sent."
+    create = requests.post(
+        f"{url}/rest/v1/friend_requests",
+        json=payload,
+        headers=headers,
+        timeout=20,
+    )
+    if create.status_code not in (200, 201):
+        try:
+            msg = create.json()
+        except Exception:
+            msg = create.text
+        return f"Could not send request: {msg}"
+
+    return f"Friend request sent to @{you_un}."
 
 
 def sb_list_friend_requests(direction: str = "incoming") -> list[dict]:
