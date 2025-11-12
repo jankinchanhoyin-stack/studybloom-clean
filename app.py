@@ -1400,11 +1400,12 @@ def render_community_page():
     st.markdown("### Add a friend")
     add_c1, add_c2 = st.columns([4, 1.3])
     with add_c1:
-        new_friend_username = st.text_input("Friend’s username", key="comm_add_username", placeholder="e.g., alex_123")
+        raw = st.text_input("Friend’s username", key="comm_add_username", placeholder="e.g., alex_123")
     with add_c2:
         if st.button("Send request", key="comm_send_req"):
             from auth_rest import sb_send_friend_request
-            msg = sb_send_friend_request((new_friend_username or "").strip())
+            handle = (raw or "").strip().lstrip("@")
+            msg = sb_send_friend_request(handle.lower())
             if msg.lower().startswith(("error", "no user", "please sign in", "you can’t", "you can't")):
                 st.error(msg)
             else:
