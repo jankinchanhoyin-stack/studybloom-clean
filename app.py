@@ -661,15 +661,6 @@ def compute_topic_progress(topic_folder_id: str) -> float:
 from typing import Dict, List, Optional
 
 def compute_topic_stats(topic_id: Optional[str]) -> Dict[str, float]:
-    """
-    Aggregates latest quiz performance and flashcard 'known' ratio for a topic.
-    Returns:
-      progress   : blended 0..1 (60% quiz avg + 40% flash known)
-      quiz_avg   : latest-per-quiz average percent (0..1)
-      quiz_count : number of quizzes counted
-      flash_known: share of reviews marked 'known' (0..1)
-      flash_reviews: number of flash reviews counted
-    """
     if not topic_id:
         return {"progress": 0.0, "quiz_avg": 0.0, "quiz_count": 0,
                 "flash_known": 0.0, "flash_reviews": 0}
@@ -682,21 +673,20 @@ def compute_topic_stats(topic_id: Optional[str]) -> Dict[str, float]:
     quiz_ids  = [it["id"] for it in items if it.get("kind") == "quiz"]
     flash_ids = [it["id"] for it in items if it.get("kind") == "flashcards"]
 
-    # ---- Quiz: take the latest attempt per quiz, then average their % scores
+    # ---- Quiz: latest attempt per quiz, then average
     quiz_avg = 0.0
     quiz_count = 0
     if quiz_ids:
         try:
-            attempts = list_quiz_attempts_for_items(quiz_ids)  # multiple rows per quiz
+            attempts = list_quiz_attempts_for_items(quiz_ids)
         except Exception:
             attempts = []
 
         latest_by_quiz: Dict[str, dict] = {}
         for at in attempts:
             iid = at.get("item_id")
-            if not iid:
-                continue
-            if (iid not in latest_by_quiz) or (at.get("created_at", "") > latest_by_quiz[iid].get("created_at", "")):
+            if not iid: continue
+            if (iid not in latest_by_quiz) or (at.get("created_at","") > latest_by_quiz[iid].get("created_at","")):
                 latest_by_quiz[iid] = at
 
         if latest_by_quiz:
@@ -707,27 +697,50 @@ def compute_topic_stats(topic_id: Optional[str]) -> Dict[str, float]:
             quiz_count = len(pct_values)
             quiz_avg = sum(pct_values) / quiz_count if quiz_count else 0.0
 
-    # ---- Flashcards: overall known ratio across reviews
+    # ---- Flashcards: progress = known / total_cards (unopened count too)
+    # total_cards = sum of card counts across all flashcard items in the topic
+    flash_total_cards = 0
+    if flash_ids:
+        try:
+            # Need to load each flashcard item to count its cards
+            for fid in flash_ids:
+                try:
+                    full = get_item(fid)  # has {"data": {"flashcards": [...]}}
+                    cards = ((full.get("data") or {}).get("flashcards") or [])
+                    flash_total_cards += len(cards)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Count "known" reviews, then normalize by total cards
     flash_known = 0.0
     flash_reviews = 0
     if flash_ids:
         try:
-            reviews = list_flash_reviews_for_items(flash_ids)
+            reviews = list_flash_reviews_for_items(flash_ids) or []
         except Exception:
             reviews = []
+
+        # how many times user marked "Knew it"
+        known_count = sum(1 for r in reviews if r.get("known") is True)
         flash_reviews = len(reviews)
-        if flash_reviews:
-            flash_known = sum(1 for r in reviews if r.get("known")) / flash_reviews
+
+        if flash_total_cards > 0:
+            # cap to avoid inflation if multiple "known" reviews recorded for the same card(s)
+            flash_known = min(known_count, flash_total_cards) / flash_total_cards
+        else:
+            flash_known = 0.0  # no cards yet -> 0%
 
     progress = 0.6 * quiz_avg + 0.4 * flash_known
     return {
         "progress": progress,
         "quiz_avg": quiz_avg,
         "quiz_count": quiz_count,
-        "flash_known": flash_known,
-        "flash_reviews": flash_reviews,
+        "flash_known": flash_known,           # now 0..1 over TOTAL CARDS
+        "flash_reviews": flash_reviews,       # still the raw count of review events
+        # optional (useful for display): "flash_total_cards": flash_total_cards,
     }
-
 
 
 # ---------------- Renderers ----------------
